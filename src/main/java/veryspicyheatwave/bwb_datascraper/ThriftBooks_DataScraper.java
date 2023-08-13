@@ -1,5 +1,6 @@
 package veryspicyheatwave.bwb_datascraper;
 
+import java.util.List;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -42,35 +43,88 @@ public class ThriftBooks_DataScraper
         }
     }
     
-    static void ScrapePages(WebDriver driver, int numberOfPages)    
+    static void ScrapePages(WebDriver driver, int numberOfPages) throws InterruptedException    
     {        
+        
         //Navigate the webpage to the URL in question 
         driver.navigate().to(BASE_URL + "/browse");
-        driver.manage().window().maximize();
+        //driver.manage().window().maximize();
+        Thread.sleep(1500);
         
         for (int i = 1; i < numberOfPages + 1; i++)
         {
-            try
-            {
-                String urlToScrape = "https://www.thriftbooks.com/browse/#b.s=mostPopular-desc&b.p=" + i + "&b.pp=30&b.oos";
+            //SCRAPE SCRAPE SCRAPE
+            //WebElement nextPageButton = driver.findElement(By.className("button"));
+            
+            /*             
+            PSEUDOCODE:
+                For each page
+                    Get a list of all of the book entries <a class="SearchResultGridItem undefined" ...>
+                    For each book
+                        Get the title <p class="SearchResultGridItem-title">
+                        Get the author <p class="SearchResultGridItem-author">
+                        Get the price range <p class="SearchResultGridItem-price">
+                        Get the link <a class attribute href="<LINK>"....
+                        Navigate to the link
+                        Wait half a second (necessary??)
+                        Get some other crap I haven't really determined yet
+                            --Book Image Link?
+                            --Book Genre?
+                            --Book Review Rating?
+                            --New book price
+                            --Used book price
+                        Navigate back
+                        Wait half a second (necessary??)
                 
-                driver.navigate().to(urlToScrape);
-                Thread.sleep(1500);
-            }
-            catch (InterruptedException ex)
+            */
+            
+            List<WebElement> books = driver.findElements(By.tagName("a"));
+            for (WebElement book : books)
             {
-                Logger.getLogger(ThriftBooks_DataScraper.class.getName()).log(Level.SEVERE, null, ex);
+                boolean isABook = false;
+                
+                List<WebElement> details = book.findElements(By.tagName("p"));                
+                for (WebElement detail : details)
+                {
+                    if (detail.getText().contains("from:"))
+                    {
+                        break;
+                    }
+                    System.out.println(detail.getText());
+                    isABook = true;
+                }
+                
+                if (isABook)
+                {
+                    System.out.println(book.getAttribute("href"));
+                    System.out.println("");
+                }
             }
             
+            //System.out.println("BCOBB SAYS THE BUTTON IS A " + nextPageButton.getText());
+            //nextPageButton.click();            
+            //Thread.sleep(500);
         }
     }
     
-    public static void main(String[] args)
+    public static void main(String[] args) throws InterruptedException
     {   
         //Set up the FirefoxDriver object
         WebDriver driver = getFFXDriver();        
-        BypassWebroot(driver);
-        ScrapePages(driver, 2);       
+        BypassWebroot(driver);        
+        
+        
+        //Wait a little bit before moving on
+        try
+        {
+            Thread.sleep(1500);
+        }
+        catch (InterruptedException ex)
+        {
+            Logger.getLogger(ThriftBooks_DataScraper.class.getName()).log(Level.SEVERE, null, ex);
+        }
+        
+        ScrapePages(driver, 1);
 
     }
 }
