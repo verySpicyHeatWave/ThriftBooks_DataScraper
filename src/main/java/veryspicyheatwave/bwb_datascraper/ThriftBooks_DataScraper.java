@@ -11,6 +11,12 @@ import org.openqa.selenium.WebElement;
 import org.openqa.selenium.firefox.FirefoxDriver;
 import org.openqa.selenium.firefox.FirefoxOptions;
 import org.openqa.selenium.firefox.FirefoxProfile;
+import org.openqa.selenium.interactions.Actions;
+import org.openqa.selenium.JavascriptExecutor;
+import org.openqa.selenium.StaleElementReferenceException;
+import org.openqa.selenium.support.ui.ExpectedConditions;
+import org.openqa.selenium.support.ui.WebDriverWait;
+
 
 public class ThriftBooks_DataScraper
 {    
@@ -48,14 +54,19 @@ public class ThriftBooks_DataScraper
         
         //Navigate the webpage to the URL in question 
         driver.navigate().to(BASE_URL + "/browse");
-        //driver.manage().window().maximize();
-        Thread.sleep(1500);
+        Thread.sleep(500);
+        
+        //Click the DENY button for cookies to get the banner out of the way
+        driver.findElement(By.cssSelector("button[class=' osano-cm-deny osano-cm-buttons__button osano-cm-button osano-cm-button--type_deny '")).click();
+        Thread.sleep(500);     
+        
+        WebDriverWait wait = new WebDriverWait(driver, 10);
+        
+            
         
         for (int i = 1; i < numberOfPages + 1; i++)
         {
-            //SCRAPE SCRAPE SCRAPE
-            //WebElement nextPageButton = driver.findElement(By.className("button"));
-            
+        Thread.sleep(500);
             /*             
             PSEUDOCODE:
                 For each page
@@ -74,9 +85,9 @@ public class ThriftBooks_DataScraper
                             --New book price
                             --Used book price
                         Navigate back
-                        Wait half a second (necessary??)
-                
+                        Wait half a second (necessary??)                
             */
+
             
             List<WebElement> books = driver.findElements(By.tagName("a"));
             for (WebElement book : books)
@@ -101,9 +112,23 @@ public class ThriftBooks_DataScraper
                 }
             }
             
-            //System.out.println("BCOBB SAYS THE BUTTON IS A " + nextPageButton.getText());
-            //nextPageButton.click();            
-            //Thread.sleep(500);
+            
+            // Click the "Next Page" button
+            WebElement nextPageButton = driver.findElement(By.cssSelector("button[class='Pagination-link is-right is-link'"));
+            if (nextPageButton != null)
+            {
+                wait.until(ExpectedConditions.visibilityOf(nextPageButton));
+                nextPageButton.sendKeys("don't accept these keys");
+                try
+                {
+                    nextPageButton.click();                    
+                }
+                catch (StaleElementReferenceException SERE)
+                {
+                    SERE.printStackTrace();
+                    continue;
+                }
+            }
         }
     }
     
@@ -124,7 +149,7 @@ public class ThriftBooks_DataScraper
             Logger.getLogger(ThriftBooks_DataScraper.class.getName()).log(Level.SEVERE, null, ex);
         }
         
-        ScrapePages(driver, 1);
+        ScrapePages(driver, 2);
 
     }
 }
