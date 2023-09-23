@@ -52,18 +52,12 @@ public class ThriftBooks_DataScraper
     }
     
     static void ScrapePages(WebDriver driver, int numberOfPages) throws InterruptedException    
-    {        
-        
-        //Navigate the webpage to the URL in question 
-        //driver.navigate().to(BASE_URL + "/browse");
-        //Thread.sleep(500);
-        //System.out.println("Navigated to the main page!");
-        
+    {                
         //Click the DENY button for cookies to get the banner out of the way
+            //I don't think I need this anymore but I'm keeping it just in case I do
         //driver.findElement(By.cssSelector("button[class=' osano-cm-deny osano-cm-buttons__button osano-cm-button osano-cm-button--type_deny '")).click();
         //Thread.sleep(500);     
-        //System.out.println("Clicked the \"Deny\" button on the pop-up banner!");
-        
+        //System.out.println("Clicked the \"Deny\" button on the pop-up banner!");        
         //WebDriverWait wait = new WebDriverWait(driver, 10);
         
             
@@ -73,8 +67,8 @@ public class ThriftBooks_DataScraper
             
             driver.navigate().to("about:blank");
             Thread.sleep(500);
-            String pageurl = BASE_URL + "/browse/#b.s=mostPopular-desc&b.p=" + pageNo + "&b.pp=30&b.oos";
-            driver.navigate().to(pageurl);
+            String pageURL = BASE_URL + "/browse/#b.s=mostPopular-desc&b.p=" + pageNo + "&b.pp=30&b.oos";
+            driver.navigate().to(pageURL);
             Thread.sleep(2000);
             /*             
             PSEUDOCODE:
@@ -114,11 +108,16 @@ public class ThriftBooks_DataScraper
                     System.out.println(detail.getText());
                     isABook = true;
                 }
-                
                 if (isABook)
                 {
-                    System.out.print(book.getAttribute("href") + "\n\n");
+                    String bookURL = book.getAttribute("href");
+                    System.out.println(bookURL);                    
+                    driver.navigate().to(bookURL);
+                    Thread.sleep(1000);
+                    
+                    //Get the goods...!
                 }
+                
             }
             
             
