@@ -8,16 +8,30 @@
 3) Start thinking about how to spit this out into a real SQL database, or at the very least into a goddamn .csv file.
 4) Clean up the BookEntry class with some getters and setters. Yeah, it's a lot, but if I'm doing OOP then that's the right
         thing to do. This ain't a fucking struct (wish it was though).
-5) OPTIONAL: Consider doing away with the "Thread.sleep" calls littered throughout and figure out a more majestic way to
+5) Put numerical values into numerical data types and use those instead of the String that we extract from the browser
+6) ***DONE*** Put in a timer so that the duration of the scraping can be measured.
+7) OPTIONAL: Consider doing away with the "Thread.sleep" calls littered throughout and figure out a more majestic way to
         wait for shit to happen with Selenium driver methods. It's a bit, err, brute force, right?
+8) ***DONE*** OPTIONAL: Since the full scraping might take a while, maybe it'd be wise to create a CLI input that prompts for the start
+        page and the number of pages. That way, I could run this bad boy for six hours at a time and just build a totally
+        massive database over the course of a week just running Selenium at night, scraping away. Maybe?
 
 ====================================================================================================================================
 */
 
 
-/*  
+/*
+    BCOBB NOTE:     The following dependencies aren't being used. I'm keeping the copied here for now but I'll
+                    probably delete them unless I need them later.
+
+    import org.openqa.selenium.interactions.Actions;
+    import org.openqa.selenium.JavascriptExecutor;
+    import org.openqa.selenium.StaleElementReferenceException;
+    import org.openqa.selenium.support.ui.ExpectedConditions;
+    import org.openqa.selenium.support.ui.WebDriverWait;
+
     BCOBB NOTE:     The following little block of code was used to click the "Deny" button on the pop-up banner.
-                    I don't think I need this anymore but I'm keeping it just in case I do.
+                    I don't think I need this anymore, but I'm keeping it just in case I do.
 
     driver.findElement(By.cssSelector("button[class=' osano-cm-deny osano-cm-buttons__button osano-cm-button osano-cm-button--type_deny '")).click();
     Thread.sleep(500);     
@@ -29,46 +43,95 @@ package veryspicyheatwave.bwb_datascraper;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Scanner;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
 // Selenium Dependencies
+import org.jetbrains.annotations.NotNull;
 import org.openqa.selenium.By;
 import org.openqa.selenium.WebDriver;
 import org.openqa.selenium.WebElement;
 import org.openqa.selenium.firefox.FirefoxDriver;
 import org.openqa.selenium.firefox.FirefoxOptions;
 import org.openqa.selenium.firefox.FirefoxProfile;
-import org.openqa.selenium.interactions.Actions;
-import org.openqa.selenium.JavascriptExecutor;
-import org.openqa.selenium.StaleElementReferenceException;
-import org.openqa.selenium.support.ui.ExpectedConditions;
-import org.openqa.selenium.support.ui.WebDriverWait;
 
 
 public class ThriftBooks_DataScraper
 {    
-    final static String BASE_URL = "https://www.thriftbooks.com";    
+    final static String BASE_URL = "https://www.thriftbooks.com";
     final static String GECKO_DRIVER_PATH = "C:/Users/smash/Downloads/geckodriver-v0.33.0-win64/geckodriver.exe";
-    
+
+
     public static void main(String[] args) throws InterruptedException
     {
+        Scanner keyboard = new Scanner(System.in);
+        System.out.println("Enter the first page you want to read: ");
+        int firstPage = keyboard.nextInt();
+        System.out.println("Enter the last page you want to read: ");
+        int lastPage = keyboard.nextInt();
+
         WebDriver driver = getFFXDriver();        
         BypassWebroot(driver);        
+        Thread.sleep(1000);
+
+        long startTime = System.nanoTime();
+
         
-        try
-        {
-            Thread.sleep(1000);
-        }
-        catch (InterruptedException ex)
-        {
-            Logger.getLogger(ThriftBooks_DataScraper.class.getName()).log(Level.SEVERE, null, ex);
-        }
-        
-        ScrapePages(driver, 2);
+        ScrapePages(driver, firstPage, lastPage);
+
+
+        long endTime = System.nanoTime();
+        long duration = (endTime - startTime) / 1000000;
+        printTimeFromNanoseconds((int)duration);
     }
     
-    static WebDriver getFFXDriver()
+
+    static void printTimeFromNanoseconds(int duration)
+    {
+        int millis = 0, seconds = 0, minutes = 0, hours = 0, days = 0;
+
+        if (duration > 1000)
+        {
+            millis = (duration % 1000);
+            seconds = (duration / 1000);
+        }
+
+        if (seconds > 60)
+        {
+            minutes = seconds / 60;
+            seconds = seconds % 60;
+        }
+        if (minutes > 60)
+        {
+            hours = minutes / 60;
+            minutes = minutes % 60;
+        }
+        if (duration > 24)
+        {
+            days = hours / 24;
+            hours = hours / 24;
+        }
+
+        System.out.print("The scraping took ");
+        if (days > 0)
+        {
+            System.out.print(days + " days, ");
+        }
+        if (hours > 0)
+        {
+            System.out.print(hours + " hours, ");
+        }
+        if (minutes > 0)
+        {
+            System.out.print(minutes + " minutes and ");
+        }
+
+        System.out.print(seconds + "." + millis + " seconds, \n");
+    }
+
+    
+    static @NotNull WebDriver getFFXDriver()
     {
         System.setProperty("webdriver.gecko.driver",GECKO_DRIVER_PATH);
         FirefoxOptions ffxOptions = new FirefoxOptions();
@@ -79,7 +142,7 @@ public class ThriftBooks_DataScraper
         return driver;
     }
     
-    static void BypassWebroot(WebDriver driver)
+    static void BypassWebroot(@NotNull WebDriver driver)
     {
         try
         {
@@ -94,11 +157,11 @@ public class ThriftBooks_DataScraper
         }
     }
     
-    static void ScrapePages(WebDriver driver, int numberOfPages) throws InterruptedException    
+    static void ScrapePages(WebDriver driver, int firstPage, int lastPage) throws InterruptedException
     {
         ArrayList<BookEntry> bookList = new ArrayList<>();
         
-        for (int pageNo = 1; pageNo < numberOfPages + 1; pageNo++)
+        for (int pageNo = firstPage; pageNo < lastPage + 1; pageNo++)
         {
             
             driver.navigate().to("about:blank");
@@ -188,7 +251,7 @@ public class ThriftBooks_DataScraper
             System.out.println(book.pageLength);
             System.out.println(book.language);
             System.out.println(book.genre);
-            System.out.println("");
+            System.out.println();
             
             Thread.sleep(250);
         }
@@ -210,21 +273,5 @@ class BookEntry
     String genre;
     
     
-    BookEntry (){}    
-    
-    
-    BookEntry (String title, String author, String link)
-    {
-        this.title = title;
-        this.author = author;
-        this.link = link;
-    }    
-    
-    BookEntry (String title, String author, String priceRange, String link)
-    {
-        this.title = title;
-        this.author = author;
-        this.priceRange = priceRange;
-        this.link = link;
-    }    
+    BookEntry (){}
 }
