@@ -30,6 +30,7 @@ public class ThriftBooks_DataScraper
         FirefoxProfile profile = new FirefoxProfile();        
         ffxOptions.setCapability(FirefoxDriver.PROFILE, profile);
         WebDriver driver = new FirefoxDriver();
+        System.out.println("Created the new web driver");
         return driver;
     }
     
@@ -42,6 +43,7 @@ public class ThriftBooks_DataScraper
             Thread.sleep(2000);
             WebElement allowBTN = driver.findElement(By.id("allowButton"));
             allowBTN.click();
+            System.out.println("Bypassed the Webroot filter page");
         }
         catch (InterruptedException ex)
         {
@@ -53,20 +55,27 @@ public class ThriftBooks_DataScraper
     {        
         
         //Navigate the webpage to the URL in question 
-        driver.navigate().to(BASE_URL + "/browse");
-        Thread.sleep(500);
+        //driver.navigate().to(BASE_URL + "/browse");
+        //Thread.sleep(500);
+        //System.out.println("Navigated to the main page!");
         
         //Click the DENY button for cookies to get the banner out of the way
-        driver.findElement(By.cssSelector("button[class=' osano-cm-deny osano-cm-buttons__button osano-cm-button osano-cm-button--type_deny '")).click();
-        Thread.sleep(500);     
+        //driver.findElement(By.cssSelector("button[class=' osano-cm-deny osano-cm-buttons__button osano-cm-button osano-cm-button--type_deny '")).click();
+        //Thread.sleep(500);     
+        //System.out.println("Clicked the \"Deny\" button on the pop-up banner!");
         
-        WebDriverWait wait = new WebDriverWait(driver, 10);
+        //WebDriverWait wait = new WebDriverWait(driver, 10);
         
             
         
-        for (int i = 1; i < numberOfPages + 1; i++)
+        for (int pageNo = 1; pageNo < numberOfPages + 1; pageNo++)
         {
-        Thread.sleep(500);
+            
+            driver.navigate().to("about:blank");
+            Thread.sleep(500);
+            String pageurl = BASE_URL + "/browse/#b.s=mostPopular-desc&b.p=" + pageNo + "&b.pp=30&b.oos";
+            driver.navigate().to(pageurl);
+            Thread.sleep(2000);
             /*             
             PSEUDOCODE:
                 For each page
@@ -90,11 +99,12 @@ public class ThriftBooks_DataScraper
 
             
             List<WebElement> books = driver.findElements(By.tagName("a"));
+            System.out.println("Got the list of books");
             for (WebElement book : books)
             {
                 boolean isABook = false;
                 
-                List<WebElement> details = book.findElements(By.tagName("p"));                
+                List<WebElement> details = book.findElements(By.tagName("p"));
                 for (WebElement detail : details)
                 {
                     if (detail.getText().contains("from:"))
@@ -107,28 +117,41 @@ public class ThriftBooks_DataScraper
                 
                 if (isABook)
                 {
-                    System.out.println(book.getAttribute("href"));
-                    System.out.println("");
+                    System.out.print(book.getAttribute("href") + "\n\n");
                 }
             }
             
             
             // Click the "Next Page" button
+            
+            /*
             WebElement nextPageButton = driver.findElement(By.cssSelector("button[class='Pagination-link is-right is-link'"));
-            if (nextPageButton != null)
-            {
-                wait.until(ExpectedConditions.visibilityOf(nextPageButton));
-                nextPageButton.sendKeys("don't accept these keys");
-                try
-                {
-                    nextPageButton.click();                    
-                }
-                catch (StaleElementReferenceException SERE)
-                {
-                    SERE.printStackTrace();
-                    continue;
-                }
+            try
+            {                
+                nextPageButton.click();
             }
+            catch (Exception ex)
+            {
+                System.out.println("Failed the first click. Trying again...");
+                if (nextPageButton != null)
+                {
+                    //wait.until(ExpectedConditions.visibilityOf(nextPageButton));
+                    Thread.sleep(2000);
+                    nextPageButton.sendKeys("don't accept these keys");
+                    try
+                    {
+                        nextPageButton.click();
+                    }
+                    catch (StaleElementReferenceException SERE)
+                    {
+                        System.out.println("Couldn't click the next page button (or so they say!)");
+                        //SERE.printStackTrace();
+                        continue;
+                    }  
+                }          
+                //Thread.sleep(5000);
+            }
+            */
         }
     }
     
