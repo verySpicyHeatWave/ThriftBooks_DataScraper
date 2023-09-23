@@ -1,5 +1,33 @@
+/*
+============================================================ TO-DO LIST ============================================================
+
+1) Get rid of the "priceRange" string and instead have a string each for "New" and "Used" priced pulled off of each book's page.
+2) Refactor the code a little bit--the ScrapePages method could be broken down into at least these two parts:
+    a) A method for scraping the full catalog pages for the basic book data
+    b) A method for scraping each book page for the more specific book data
+3) Start thinking about how to spit this out into a real SQL database, or at the very least into a goddamn .csv file.
+4) Clean up the BookEntry class with some getters and setters. Yeah, it's a lot, but if I'm doing OOP then that's the right
+        thing to do. This ain't a fucking struct (wish it was though).
+5) OPTIONAL: Consider doing away with the "Thread.sleep" calls littered throughout and figure out a more majestic way to
+        wait for shit to happen with Selenium driver methods. It's a bit, err, brute force, right?
+
+====================================================================================================================================
+*/
+
+
+/*  
+    BCOBB NOTE:     The following little block of code was used to click the "Deny" button on the pop-up banner.
+                    I don't think I need this anymore but I'm keeping it just in case I do.
+
+    driver.findElement(By.cssSelector("button[class=' osano-cm-deny osano-cm-buttons__button osano-cm-button osano-cm-button--type_deny '")).click();
+    Thread.sleep(500);     
+    System.out.println("Clicked the \"Deny\" button on the pop-up banner!");        
+    WebDriverWait wait = new WebDriverWait(driver, 10);        
+*/
+
 package veryspicyheatwave.bwb_datascraper;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -20,12 +48,29 @@ import org.openqa.selenium.support.ui.WebDriverWait;
 
 public class ThriftBooks_DataScraper
 {    
-    static String BASE_URL = "https://www.thriftbooks.com";    
-    static String GECKO_DRIVER_PATH = "C:/Users/smash/Downloads/geckodriver-v0.33.0-win64/geckodriver.exe";
+    final static String BASE_URL = "https://www.thriftbooks.com";    
+    final static String GECKO_DRIVER_PATH = "C:/Users/smash/Downloads/geckodriver-v0.33.0-win64/geckodriver.exe";
+    
+    public static void main(String[] args) throws InterruptedException
+    {
+        WebDriver driver = getFFXDriver();        
+        BypassWebroot(driver);        
+        
+        try
+        {
+            Thread.sleep(1000);
+        }
+        catch (InterruptedException ex)
+        {
+            Logger.getLogger(ThriftBooks_DataScraper.class.getName()).log(Level.SEVERE, null, ex);
+        }
+        
+        ScrapePages(driver, 2);
+    }
     
     static WebDriver getFFXDriver()
     {
-        System.setProperty("webdriver.gecko.driver",GECKO_DRIVER_PATH);        
+        System.setProperty("webdriver.gecko.driver",GECKO_DRIVER_PATH);
         FirefoxOptions ffxOptions = new FirefoxOptions();
         FirefoxProfile profile = new FirefoxProfile();        
         ffxOptions.setCapability(FirefoxDriver.PROFILE, profile);
@@ -36,8 +81,6 @@ public class ThriftBooks_DataScraper
     
     static void BypassWebroot(WebDriver driver)
     {
-        
-        //Click the "Allow" button on my WebRoot blocker
         try
         {
             Thread.sleep(2000);
@@ -52,15 +95,8 @@ public class ThriftBooks_DataScraper
     }
     
     static void ScrapePages(WebDriver driver, int numberOfPages) throws InterruptedException    
-    {                
-        //Click the DENY button for cookies to get the banner out of the way
-            //I don't think I need this anymore but I'm keeping it just in case I do
-        //driver.findElement(By.cssSelector("button[class=' osano-cm-deny osano-cm-buttons__button osano-cm-button osano-cm-button--type_deny '")).click();
-        //Thread.sleep(500);     
-        //System.out.println("Clicked the \"Deny\" button on the pop-up banner!");        
-        //WebDriverWait wait = new WebDriverWait(driver, 10);
-        
-            
+    {
+        ArrayList<BookEntry> bookList = new ArrayList<>();
         
         for (int pageNo = 1; pageNo < numberOfPages + 1; pageNo++)
         {
@@ -69,109 +105,126 @@ public class ThriftBooks_DataScraper
             Thread.sleep(500);
             String pageURL = BASE_URL + "/browse/#b.s=mostPopular-desc&b.p=" + pageNo + "&b.pp=30&b.oos";
             driver.navigate().to(pageURL);
-            Thread.sleep(2000);
-            /*             
-            PSEUDOCODE:
-                For each page
-                    Get a list of all of the book entries <a class="SearchResultGridItem undefined" ...>
-                    For each book
-                        Get the title <p class="SearchResultGridItem-title">
-                        Get the author <p class="SearchResultGridItem-author">
-                        Get the price range <p class="SearchResultGridItem-price">
-                        Get the link <a class attribute href="<LINK>"....
-                        Navigate to the link
-                        Wait half a second (necessary??)
-                        Get some other crap I haven't really determined yet
-                            --Book Image Link?
-                            --Book Genre?
-                            --Book Review Rating?
-                            --New book price
-                            --Used book price
-                        Navigate back
-                        Wait half a second (necessary??)                
-            */
+            Thread.sleep(1500);
 
             
             List<WebElement> books = driver.findElements(By.tagName("a"));
-            System.out.println("Got the list of books");
+            System.out.println("Got the list of books from page " + pageNo);
             for (WebElement book : books)
             {
+                BookEntry tempBook = new BookEntry();
                 boolean isABook = false;
                 
                 List<WebElement> details = book.findElements(By.tagName("p"));
+                int counter = 1;
                 for (WebElement detail : details)
                 {
                     if (detail.getText().contains("from:"))
                     {
                         break;
                     }
-                    System.out.println(detail.getText());
+                    switch (counter)
+                    {   // Rule switch? Great suggestion, IDE!
+                        case 1 -> tempBook.title = detail.getText();
+                        case 2 -> tempBook.author = detail.getText();
+                        case 3 -> tempBook.priceRange = detail.getText();
+                    }
+                    counter++;
                     isABook = true;
                 }
+                
                 if (isABook)
                 {
-                    String bookURL = book.getAttribute("href");
-                    System.out.println(bookURL);                    
-                    driver.navigate().to(bookURL);
-                    Thread.sleep(1000);
-                    
-                    //Get the goods...!
-                }
-                
+                    tempBook.link = book.getAttribute("href");
+                    bookList.add(tempBook);
+                }                
             }
+        }
+        
+        for (BookEntry book : bookList)
+        {
+            driver.navigate().to(book.link);
+            Thread.sleep(750);
             
+            List<WebElement> details = driver.findElements(By.tagName("span"));
+            int index = -1;
             
-            // Click the "Next Page" button
-            
-            /*
-            WebElement nextPageButton = driver.findElement(By.cssSelector("button[class='Pagination-link is-right is-link'"));
-            try
-            {                
-                nextPageButton.click();
-            }
-            catch (Exception ex)
+            for (WebElement detail : details)
             {
-                System.out.println("Failed the first click. Trying again...");
-                if (nextPageButton != null)
+                index++;
+                if (detail.getText().toLowerCase().contains("isbn"))
                 {
-                    //wait.until(ExpectedConditions.visibilityOf(nextPageButton));
-                    Thread.sleep(2000);
-                    nextPageButton.sendKeys("don't accept these keys");
-                    try
-                    {
-                        nextPageButton.click();
-                    }
-                    catch (StaleElementReferenceException SERE)
-                    {
-                        System.out.println("Couldn't click the next page button (or so they say!)");
-                        //SERE.printStackTrace();
-                        continue;
-                    }  
-                }          
-                //Thread.sleep(5000);
+                    book.isbnCode = details.get(index + 1).getText();
+                    continue;
+                }
+                if (detail.getText().toLowerCase().contains("release"))
+                {
+                    book.releaseDate = details.get(index + 1).getText();
+                    continue;
+                }
+                if (detail.getText().toLowerCase().contains("length"))
+                {
+                    book.pageLength = details.get(index + 1).getText();
+                    continue;
+                }
+                if (detail.getText().toLowerCase().contains("language"))
+                {
+                    book.language = details.get(index + 1).getText();
+                    continue;
+                }
+                if (detail.getAttribute("itemprop") != null && book.genre == null && detail.getAttribute("itemprop").toLowerCase().contains("name"))
+                {
+                    book.genre = detail.getText();
+                }
             }
-            */
+            
+            //BCOBB: Delete this once I get this data spit into some sort of file.
+            System.out.println(book.title);
+            System.out.println(book.author);
+            System.out.println(book.priceRange);
+            System.out.println(book.link);
+            System.out.println(book.isbnCode);
+            System.out.println(book.releaseDate);
+            System.out.println(book.pageLength);
+            System.out.println(book.language);
+            System.out.println(book.genre);
+            System.out.println("");
+            
+            Thread.sleep(250);
         }
+        System.out.println("I got " + bookList.size() + " books!");
     }
-    
-    public static void main(String[] args) throws InterruptedException
-    {   
-        //Set up the FirefoxDriver object
-        WebDriver driver = getFFXDriver();        
-        BypassWebroot(driver);        
-        
-        
-        //Wait a little bit before moving on
-        try
-        {
-            Thread.sleep(1500);
-        }
-        catch (InterruptedException ex)
-        {
-            Logger.getLogger(ThriftBooks_DataScraper.class.getName()).log(Level.SEVERE, null, ex);
-        }
-        
-        ScrapePages(driver, 2);
+}
 
-    }
+
+class BookEntry
+{
+    String title;
+    String author;
+    String priceRange;
+    String link;
+    String isbnCode;
+    String releaseDate;
+    String pageLength;
+    String language;
+    String genre;
+    
+    
+    BookEntry (){}    
+    
+    
+    BookEntry (String title, String author, String link)
+    {
+        this.title = title;
+        this.author = author;
+        this.link = link;
+    }    
+    
+    BookEntry (String title, String author, String priceRange, String link)
+    {
+        this.title = title;
+        this.author = author;
+        this.priceRange = priceRange;
+        this.link = link;
+    }    
 }
