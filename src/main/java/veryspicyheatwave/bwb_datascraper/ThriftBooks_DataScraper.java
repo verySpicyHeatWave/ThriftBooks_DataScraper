@@ -6,15 +6,16 @@
     a) ***DONE*** A method for scraping the full catalog pages for the basic book data
     b) ***DONE*** A method for scraping each book page for the more specific book data
 3) Start thinking about how to spit this out into a real SQL database, or at the very least into a goddamn .csv file.
-4) Clean up the BookEntry class with some getters and setters. Yeah, it's a lot, but if I'm doing OOP then that's the right
-        thing to do. This ain't a fucking struct (wish it was though).
-5) Put numerical values into numerical data types and use those instead of the String that we extract from the browser
+4) ***SCRAP*** Clean up the BookEntry class with some getters and setters. Yeah, it's a lot, but if I'm doing OOP then that's the right
+        thing to do. This ain't a struct (wish it was though). **EDIT: This is a waste of time and code. I'm treating this
+        thing like a struct and that's just the way it is.
+5) ***DONE*** Put numerical values into numerical data types and use those instead of the String that we extract from the browser
     a) ***DONE*** New and Used price variables should be doubles
-    b) ReleaseDate string should be some sort of "date and time" data type (gotta look into that)
-    c) Page length should be an int
+    b) ***DONE*** ReleaseDate string should be some sort of "date and time" data type (gotta look into that)
+    c) ***DONE*** Page length should be an int
 6) Add the image link to the BookEntry class as a String, and then figure out a way to download the image and include it
         the database. I think that's possible? I want the book images.
-7) Just learned a spicy new trick for how to find elements by their xpath and to sift through their child elements. I need to
+7) ***DONE*** Just learned a spicy new trick for how to find elements by their xpath and to sift through their child elements. I need to
         refactor the code to use this everywhere, I think it will save a lot of time since right now I'm just searching through
         every element on the page for what I want. I have the ability to narrow that down. DO IT.
 8) ***DONE*** Put in a timer so that the duration of the scraping can be measured.
@@ -49,14 +50,18 @@
 
 package veryspicyheatwave.bwb_datascraper;
 
+import java.text.ParseException;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.List;
 import java.util.Scanner;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-// Selenium Dependencies
 import org.jetbrains.annotations.NotNull;
+
+// Selenium Dependencies
 import org.openqa.selenium.By;
 import org.openqa.selenium.WebDriver;
 import org.openqa.selenium.WebElement;
@@ -154,7 +159,6 @@ public class ThriftBooks_DataScraper
                     {   // Rule switch? Great suggestion, IDE!
                         case 1 -> tempBook.title = detail.getText();
                         case 2 -> tempBook.author = detail.getText();
-                        //case 3 -> tempBook.priceRange = detail.getText();
                     }
                     counter++;
                     isABook = true;
@@ -171,8 +175,6 @@ public class ThriftBooks_DataScraper
         Thread.sleep(250);
         System.out.println("I got " + bookList.size() + " books!");
 
-        scrapeBookPages(driver, bookList);
-
         return bookList;
     }
 
@@ -183,8 +185,20 @@ public class ThriftBooks_DataScraper
             driver.navigate().to(book.link);
             Thread.sleep(750);
 
-            List<WebElement> details = driver.findElements(By.tagName("span"));
+            WebElement table = driver.findElement(By.xpath("//div[@class='WorkMeta-details is-collapsed']"));
+            List<WebElement> details = table.findElements(By.tagName("span"));
             int index = -1;
+
+            WebElement pageContents = driver.findElement(By.xpath("//div[@class='Content']"));
+            List<WebElement> spans = pageContents.findElements(By.tagName("span"));
+            for (WebElement span : spans)
+            {
+                if (span.getAttribute("itemprop") != null && span.getAttribute("itemprop").toLowerCase().contains("name"))
+                {
+                    book.genre = span.getText();
+                    break;
+                }
+            }
 
             for (WebElement detail : details)
             {
@@ -196,12 +210,14 @@ public class ThriftBooks_DataScraper
                 }
                 if (detail.getText().toLowerCase().contains("release"))
                 {
-                    book.releaseDate = details.get(index + 1).getText();
+                    book.releaseDate = parseDateFromStr(details.get(index + 1).getText());
                     continue;
                 }
                 if (detail.getText().toLowerCase().contains("length"))
                 {
-                    book.pageLength = details.get(index + 1).getText();
+                    String tempPageLength = details.get(index + 1).getText();
+                    tempPageLength = tempPageLength.replace(" Pages","");
+                    book.pageLength = Integer.parseInt(tempPageLength);
                     continue;
                 }
                 if (detail.getText().toLowerCase().contains("language"))
@@ -209,13 +225,17 @@ public class ThriftBooks_DataScraper
                     book.language = details.get(index + 1).getText();
                     continue;
                 }
+
                 if (detail.getAttribute("itemprop") != null && book.genre == null && detail.getAttribute("itemprop").toLowerCase().contains("name"))
                 {
                     book.genre = detail.getText();
                 }
             }
 
-            List<WebElement> buttons = driver.findElements(By.xpath("//button[@class='NewButton WorkSelector-button']"));
+            WebElement buttonContainer = driver.findElement(By.xpath("//div[@class='WorkSelector-rowContainer']"));
+
+
+            List<WebElement> buttons = buttonContainer.findElements(By.tagName("button"));
             for (WebElement button : buttons)
             {
                 List<WebElement> buttDetails = button.findElements(By.xpath("./child::div"));
@@ -314,6 +334,25 @@ public class ThriftBooks_DataScraper
         respBook.newPrice = Double.parseDouble(parsedPriceString[1]);
     }
 
+
+    static Date parseDateFromStr(String dateStr)
+    {
+        SimpleDateFormat format = new SimpleDateFormat("MMMM yyyy");
+
+        Date resp = new Date();
+        try
+        {
+            resp = null;
+            resp = format.parse(dateStr);
+        }
+        catch (ParseException ex)
+        {
+            System.out.println("Failed to parse date string...");
+        }
+
+        return resp;
+    }
+
     
     static @NotNull WebDriver getFFXDriver()
     {
@@ -376,8 +415,8 @@ class BookEntry
     String author;
     String link;
     String isbnCode;
-    String releaseDate;
-    String pageLength;
+    Date releaseDate;
+    int pageLength;
     String language;
     String genre;
     double newPrice;
