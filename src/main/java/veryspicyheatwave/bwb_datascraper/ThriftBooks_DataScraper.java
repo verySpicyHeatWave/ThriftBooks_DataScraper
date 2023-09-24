@@ -1,13 +1,19 @@
 /*
 ============================================================ TO-DO LIST ============================================================
 
-1) Run the scraper overnight and see how accurate my time estimate is. 2 minutes per page means 30 pages per hour. After 3 hours (90 pages)
-        I should wind up with 2700 books in the CSV.
+1) Run the scraper overnight and see how accurate my time estimate is. 2 minutes per page means 30 pages per hour. 120 pages should
+        take about 4 hours and I should wind up with 3600 books in the CSV.
 2) Start looking into pumping the data into a SQL database.
 3) Figure out how to automatically download the image files and either save them somewhere to reference later or embed them into the
         SQL database (is that even possible?)
-4) OPTIONAL: Maybe I want to reformat the date before I send it off? The simple "Date.toString()" method has a really ugly format and even
+4) It would also be wise to write all of my debug lines to a log file. That way I can always troubleshoot and see where things might be
+        going wrong down the road. I want to implement that.
+5) OPTIONAL: Maybe I want to reformat the date before I send it off? The simple "Date.toString()" method has a really ugly format and even
         Excel, which is pretty good at recognizing dates even if there is no date, doesn't recognize it as a date.
+6) OPTIONAL: I wonder if I'll ever actually use the "bookList" variable that's in the main function. Maybe I ought to refactor to just cut
+        that out. Since I'm writing to the DB line by line instead of just dumping at the end of everything, I may never use it.
+7) OPTIONAL: Minor addition, but adding the page number to the book details that go to the CSV could be helpful for debugging, as well, even
+        though that data wouldn't be necessary for the final DB later on.
 
 ====================================================================================================================================
 */
@@ -74,7 +80,7 @@ public class ThriftBooks_DataScraper
             return;
         }
 
-        writeLineToCSV("Title, Author, Used Price, New Price, Genre, ISBN Code, Release Date," +
+        writeLineToCSV("Title, Author, Used Price, New Price, Genre, Format, ISBN Code, Release Date," +
                         "Page Length, Language, ThriftBooks URL, Image Link 1, Image Link 2");
 
         System.out.println("Generated CSV file");
@@ -121,6 +127,7 @@ public class ThriftBooks_DataScraper
     static @NotNull ArrayList<BookEntry> scrapeCatalogPages(WebDriver driver, int firstPage, int lastPage) throws InterruptedException
     {
         ArrayList<BookEntry> bookList = new ArrayList<>();
+        Wait<WebDriver> wait = new WebDriverWait(driver, 2);
 
         for (int pageNo = firstPage; pageNo < lastPage + 1; pageNo++)
         {
@@ -128,7 +135,9 @@ public class ThriftBooks_DataScraper
             Thread.sleep(500);
             String pageURL = BASE_URL + "/browse/#b.s=mostPopular-desc&b.p=" + pageNo + "&b.pp=30&b.oos";
             driver.navigate().to(pageURL);
-            Thread.sleep(1500);
+            Thread.sleep(2000);
+            wait.until(d -> driver.findElement(By.xpath("/html/body/div[4]/div/div[2]/div[2]/div[2]/div/div/div/div/div[2]/div[2]/div[1]/div/div[1]")).isDisplayed());
+            Thread.sleep(500);
 
             WebElement searchContainer = driver.findElement(By.xpath(   "/html/body/div[4]/div/div[2]/div[2]/div[2]/div/div/div/div/div[2]/div[2]/div[1]/div/div[1]"));
             List<WebElement> books = searchContainer.findElements(By.tagName("a"));
@@ -176,9 +185,10 @@ public class ThriftBooks_DataScraper
         for (BookEntry book : bookList)
         {
             driver.navigate().to(book.link);
-            WebElement table = driver.findElement(By.xpath("//div[@class='WorkMeta-details is-collapsed']"));
-            wait.until(d -> table.isDisplayed());
+            Thread.sleep(400);
+            wait.until(d -> driver.findElement(By.xpath("//div[@class='WorkMeta-details is-collapsed']")).isDisplayed());
 
+            WebElement table = driver.findElement(By.xpath("//div[@class='WorkMeta-details is-collapsed']"));
             List<WebElement> details = table.findElements(By.tagName("span"));
             int index = -1;
 
@@ -237,7 +247,10 @@ public class ThriftBooks_DataScraper
                     if (buttDetail.getText().equalsIgnoreCase("paperback"))
                     {
                         WebElement priceRangeElement = buttDetail.findElement(By.xpath("./following-sibling::div[@class='']//span"));
-                        getNewAndUsedPrices(book, priceRangeElement.getText());
+                        if (priceRangeElement.getText().contains("$"))
+                        {
+                            getNewAndUsedPrices(book.paperbackPrices, priceRangeElement.getText());
+                        }
                         button.click();
                         Thread.sleep(150);
                         WebElement image = driver.findElement(By.xpath("//img[@itemprop='image']"));
@@ -246,23 +259,40 @@ public class ThriftBooks_DataScraper
                         continue;
                     }
 
-                    if (buttDetail.getText().toLowerCase().contains("market"))
+                    if (buttDetail.getText().equalsIgnoreCase("mass market paperback"))
                     {
                         button.click();
                         Thread.sleep(150);
                         WebElement image = driver.findElement(By.xpath("//img[@itemprop='image']"));
                         book.massImageLink = image.getAttribute("src");
+                        if (book.usedPrice <= 0 || book.newPrice <= 0)
+                        {
+                            WebElement priceRangeElement = buttDetail.findElement(By.xpath("./following-sibling::div[@class='']//span"));
+                            getNewAndUsedPrices(book.massMarketPrices, priceRangeElement.getText());
+                        }
+                        continue;
+                    }
+
+                    if (buttDetail.getText().equalsIgnoreCase("hardcover"))
+                    {
+                        WebElement priceRangeElement = buttDetail.findElement(By.xpath("./following-sibling::div[@class='']//span"));
+                        if (priceRangeElement.getText().contains("$"))
+                        {
+                            getNewAndUsedPrices(book.hardcoverPrices, priceRangeElement.getText());
+                        }
                     }
                 }
             }
 
-            String dataEntry = String.format("\"%s\", \"%s\", %.2f, %.2f, \"%s\", \"%s\", \"%s\", %d, \"%s\", \"%s\", \"%s\", \"%s\"",
-                    book.title, book.author, book.usedPrice, book.newPrice, book.genre, book.isbnCode, book.releaseDate.toString(),
+            determineBestPriceSet(book);
+
+            String dataEntry = String.format("\"%s\",\"%s\",%.2f,%.2f,\"%s\",\"%s\",\"%s\",\"%s\",%d,\"%s\",\"%s\",\"%s\",\"%s\"",
+                    book.title, book.author, book.usedPrice, book.newPrice, book.genre, book.format, book.isbnCode, book.releaseDate.toString(),
                     book.pageLength, book.language, book.link, book.paperbackImageLink, book.massImageLink);
 
             writeLineToCSV(dataEntry);
 
-            System.out.println("Added " + book.title + " to the file.");
+            System.out.println("Successfully added book number " + (1 + bookList.indexOf(book)) + " titled " + book.title + " to the file.");
         }
     }
     
@@ -311,16 +341,80 @@ public class ThriftBooks_DataScraper
     }
 
 
-    static void getNewAndUsedPrices(@NotNull BookEntry respBook, @NotNull String priceString)
+    static void getNewAndUsedPrices(@NotNull PriceStructure respBook, @NotNull String priceString)
     {
-        String[] parsedPriceString = priceString.split("-");
-        for (int i = 0; i < parsedPriceString.length; i++)
+        if (priceString.contains(" - "))
         {
-            parsedPriceString[i] = parsedPriceString[i].trim();
-            parsedPriceString[i] = parsedPriceString[i].replace("$", "");
+            String[] parsedPriceString = priceString.split("-");
+            for (int i = 0; i < parsedPriceString.length; i++)
+            {
+                parsedPriceString[i] = parsedPriceString[i].trim();
+                parsedPriceString[i] = parsedPriceString[i].replace("$", "");
+            }
+            respBook.usedPrice = Double.parseDouble(parsedPriceString[0]);
+            respBook.newPrice = Double.parseDouble(parsedPriceString[1]);
         }
-        respBook.usedPrice = Double.parseDouble(parsedPriceString[0]);
-        respBook.newPrice = Double.parseDouble(parsedPriceString[1]);
+        else if (priceString.contains("$"))
+        {
+            priceString = priceString.trim();
+            priceString = priceString.replace("$", "");
+            respBook.newPrice = Double.parseDouble(priceString);
+            respBook.usedPrice = 0;
+        }
+        else
+        {
+            respBook.usedPrice = 0;
+            respBook.newPrice = 0;
+        }
+    }
+
+    static void determineBestPriceSet(BookEntry book)
+    {
+        ArrayList<PriceStructure> priceLists = new ArrayList<>();
+        boolean[] removeIndices = {false, false, false};
+        priceLists.add(book.paperbackPrices);
+        priceLists.add(book.massMarketPrices);
+        priceLists.add(book.hardcoverPrices);
+
+        for (int i = 0; i <= priceLists.size() - 1; i++)
+        {
+            if (priceLists.get(i).newPrice <= 0 || priceLists.get(i).newPrice - priceLists.get(i).usedPrice < 2)
+            {
+                removeIndices[i] = true;
+            }
+        }
+
+        for (int i = priceLists.size() - 1; i >= 0; i--)
+        {
+            if (removeIndices[i])
+            {
+                priceLists.remove(i);
+            }
+        }
+
+        if (priceLists.size() == 1)
+        {
+            book.newPrice = priceLists.get(0).newPrice;
+            book.usedPrice = priceLists.get(0).usedPrice;
+            book.format = priceLists.get(0).format;
+            return;
+        }
+
+        PriceStructure returnBook = new PriceStructure("null");
+        returnBook.newPrice = 1000000000;
+        returnBook.usedPrice = 1000000000;
+
+        for (int i = 0; i <= priceLists.size() - 1; i++)
+        {
+            if (priceLists.get(i).newPrice < returnBook.newPrice)
+            {
+                returnBook = priceLists.get(i);
+            }
+        }
+
+        book.newPrice = returnBook.newPrice;
+        book.usedPrice = returnBook.usedPrice;
+        book.format = returnBook.format;
     }
 
 
@@ -338,7 +432,6 @@ public class ThriftBooks_DataScraper
         {
             System.out.println("Failed to parse date string...");
         }
-
         return resp;
     }
 
@@ -412,11 +505,32 @@ class BookEntry
     int pageLength;
     String language;
     String genre;
+    String format;
     double newPrice;
     double usedPrice;
     String paperbackImageLink;
     String massImageLink;
-    
-    
+
+    PriceStructure massMarketPrices = new PriceStructure("Paperback");
+    PriceStructure paperbackPrices = new PriceStructure("Paperback");
+    PriceStructure hardcoverPrices = new PriceStructure("Hardcover");
+
+
     BookEntry (){}
+}
+
+
+
+
+class PriceStructure
+{
+    double newPrice;
+    double usedPrice;
+    String format;
+
+
+    PriceStructure (String format)
+    {
+        this.format = format;
+    }
 }
