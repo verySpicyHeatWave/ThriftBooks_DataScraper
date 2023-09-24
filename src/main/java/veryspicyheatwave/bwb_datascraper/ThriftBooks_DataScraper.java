@@ -1,55 +1,21 @@
 /*
 ============================================================ TO-DO LIST ============================================================
 
-1) ***DONE***Get rid of the "priceRange" string and instead have a string each for "New" and "Used" priced pulled off of each book's page.
-2) ***DONE*** Refactor the code a little bit--the ScrapePages method could be broken down into at least these two parts:
-    a) ***DONE*** A method for scraping the full catalog pages for the basic book data
-    b) ***DONE*** A method for scraping each book page for the more specific book data
-3) Start thinking about how to spit this out into a real SQL database, or at the very least into a goddamn .csv file.
-4) ***SCRAP*** Clean up the BookEntry class with some getters and setters. Yeah, it's a lot, but if I'm doing OOP then that's the right
-        thing to do. This ain't a struct (wish it was though). **EDIT: This is a waste of time and code. I'm treating this
-        thing like a struct and that's just the way it is.
-5) ***DONE*** Put numerical values into numerical data types and use those instead of the String that we extract from the browser
-    a) ***DONE*** New and Used price variables should be doubles
-    b) ***DONE*** ReleaseDate string should be some sort of "date and time" data type (gotta look into that)
-    c) ***DONE*** Page length should be an int
-6) Add the image link to the BookEntry class as a String, and then figure out a way to download the image and include it
-        the database. I think that's possible? I want the book images.
-7) ***DONE*** Just learned a spicy new trick for how to find elements by their xpath and to sift through their child elements. I need to
-        refactor the code to use this everywhere, I think it will save a lot of time since right now I'm just searching through
-        every element on the page for what I want. I have the ability to narrow that down. DO IT.
-8) ***DONE*** Put in a timer so that the duration of the scraping can be measured.
-9) OPTIONAL: Consider doing away with the "Thread.sleep" calls littered throughout and figure out a more majestic way to
-        wait for shit to happen with Selenium driver methods. It's a bit, err, brute force, right?
-10) ***DONE*** OPTIONAL: Since the full scraping might take a while, maybe it'd be wise to create a CLI input that prompts for the start
-        page and the number of pages. That way, I could run this bad boy for six hours at a time and just build a totally
-        massive database over the course of a week just running Selenium at night, scraping away. Maybe?
+1) Run the scraper overnight and see how accurate my time estimate is. 2 minutes per page means 30 pages per hour. After 3 hours (90 pages)
+        I should wind up with 2700 books in the CSV.
+2) Start looking into pumping the data into a SQL database.
+3) Figure out how to automatically download the image files and either save them somewhere to reference later or embed them into the
+        SQL database (is that even possible?)
+4) OPTIONAL: Maybe I want to reformat the date before I send it off? The simple "Date.toString()" method has a really ugly format and even
+        Excel, which is pretty good at recognizing dates even if there is no date, doesn't recognize it as a date.
 
 ====================================================================================================================================
 */
 
-
-/*
-    BCOBB NOTE:     The following dependencies aren't being used. I'm keeping the copied here for now but I'll
-                    probably delete them unless I need them later.
-
-    import org.openqa.selenium.interactions.Actions;
-    import org.openqa.selenium.JavascriptExecutor;
-    import org.openqa.selenium.StaleElementReferenceException;
-    import org.openqa.selenium.support.ui.ExpectedConditions;
-    import org.openqa.selenium.support.ui.WebDriverWait;
-
-    BCOBB NOTE:     The following little block of code was used to click the "Deny" button on the pop-up banner.
-                    I don't think I need this anymore, but I'm keeping it just in case I do.
-
-    driver.findElement(By.cssSelector("button[class=' osano-cm-deny osano-cm-buttons__button osano-cm-button osano-cm-button--type_deny '")).click();
-    Thread.sleep(500);     
-    System.out.println("Clicked the \"Deny\" button on the pop-up banner!");        
-    WebDriverWait wait = new WebDriverWait(driver, 10);        
-*/
-
 package veryspicyheatwave.bwb_datascraper;
 
+import java.io.FileWriter;
+import java.io.IOException;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -68,12 +34,15 @@ import org.openqa.selenium.WebElement;
 import org.openqa.selenium.firefox.FirefoxDriver;
 import org.openqa.selenium.firefox.FirefoxOptions;
 import org.openqa.selenium.firefox.FirefoxProfile;
+import org.openqa.selenium.support.ui.Wait;
+import org.openqa.selenium.support.ui.WebDriverWait;
 
 
 public class ThriftBooks_DataScraper
 {    
     final static String BASE_URL = "https://www.thriftbooks.com";
     final static String GECKO_DRIVER_PATH = "C:/Users/smash/Downloads/geckodriver-v0.33.0-win64/geckodriver.exe";
+    final static String SAVE_FILE = "C:/Users/smash/Desktop/Dad's Stuff/Coding/dataScrape_" + System.currentTimeMillis() +".csv";
 
 
     public static void main(String[] args) throws InterruptedException
@@ -105,9 +74,14 @@ public class ThriftBooks_DataScraper
             return;
         }
 
+        writeLineToCSV("Title, Author, Used Price, New Price, Genre, ISBN Code, Release Date," +
+                        "Page Length, Language, ThriftBooks URL, Image Link 1, Image Link 2");
+
+        System.out.println("Generated CSV file");
+
         WebDriver driver = getFFXDriver();        
-        BypassWebroot(driver);        
-        Thread.sleep(1000);
+        BypassWebroot(driver);
+        Thread.sleep(250);
 
         long startTime = System.nanoTime();
 
@@ -118,6 +92,23 @@ public class ThriftBooks_DataScraper
         printTimeFromNanoseconds((int)duration);
     }
 
+
+    static void writeLineToCSV(String dataEntry)
+    {
+        FileWriter writer;
+        try
+        {
+            writer = new FileWriter(ThriftBooks_DataScraper.SAVE_FILE, true);
+            writer.write(dataEntry + "\n");
+            writer.close();
+        }
+        catch (IOException ex)
+        {
+            System.out.println("Failed to write to CSV file. Oops!");
+        }
+    }
+
+
     static @NotNull ArrayList<BookEntry> getBookList(WebDriver driver, int firstPage, int lastPage) throws InterruptedException
     {
         ArrayList<BookEntry> tempBookList = scrapeCatalogPages(driver, firstPage, lastPage);
@@ -126,22 +117,21 @@ public class ThriftBooks_DataScraper
         return tempBookList;
     }
 
+
     static @NotNull ArrayList<BookEntry> scrapeCatalogPages(WebDriver driver, int firstPage, int lastPage) throws InterruptedException
     {
         ArrayList<BookEntry> bookList = new ArrayList<>();
 
         for (int pageNo = firstPage; pageNo < lastPage + 1; pageNo++)
         {
-
             driver.navigate().to("about:blank");
             Thread.sleep(500);
             String pageURL = BASE_URL + "/browse/#b.s=mostPopular-desc&b.p=" + pageNo + "&b.pp=30&b.oos";
             driver.navigate().to(pageURL);
             Thread.sleep(1500);
 
-
-            List<WebElement> books = driver.findElements(By.tagName("a"));
-            System.out.println("Got the list of books from page " + pageNo);
+            WebElement searchContainer = driver.findElement(By.xpath(   "/html/body/div[4]/div/div[2]/div[2]/div[2]/div/div/div/div/div[2]/div[2]/div[1]/div/div[1]"));
+            List<WebElement> books = searchContainer.findElements(By.tagName("a"));
             for (WebElement book : books)
             {
                 BookEntry tempBook = new BookEntry();
@@ -170,6 +160,7 @@ public class ThriftBooks_DataScraper
                     bookList.add(tempBook);
                 }
             }
+            System.out.println("Got the list of books from page " + pageNo);
         }
 
         Thread.sleep(250);
@@ -178,14 +169,16 @@ public class ThriftBooks_DataScraper
         return bookList;
     }
 
+
     static void scrapeBookPages(WebDriver driver, @NotNull ArrayList<BookEntry> bookList) throws InterruptedException
     {
+        Wait<WebDriver> wait = new WebDriverWait(driver, 2);
         for (BookEntry book : bookList)
         {
             driver.navigate().to(book.link);
-            Thread.sleep(750);
-
             WebElement table = driver.findElement(By.xpath("//div[@class='WorkMeta-details is-collapsed']"));
+            wait.until(d -> table.isDisplayed());
+
             List<WebElement> details = table.findElements(By.tagName("span"));
             int index = -1;
 
@@ -243,9 +236,12 @@ public class ThriftBooks_DataScraper
                 {
                     if (buttDetail.getText().equalsIgnoreCase("paperback"))
                     {
-                        System.out.println("Found the paperback button!");
                         WebElement priceRangeElement = buttDetail.findElement(By.xpath("./following-sibling::div[@class='']//span"));
                         getNewAndUsedPrices(book, priceRangeElement.getText());
+                        button.click();
+                        Thread.sleep(150);
+                        WebElement image = driver.findElement(By.xpath("//img[@itemprop='image']"));
+                        book.paperbackImageLink = image.getAttribute("src");
 
                         continue;
                     }
@@ -254,26 +250,19 @@ public class ThriftBooks_DataScraper
                     {
                         button.click();
                         Thread.sleep(150);
+                        WebElement image = driver.findElement(By.xpath("//img[@itemprop='image']"));
+                        book.massImageLink = image.getAttribute("src");
                     }
                 }
             }
 
-            WebElement image = driver.findElement(By.xpath("//img[@itemprop='image']"));
-            book.imageLink = image.getAttribute("src");
+            String dataEntry = String.format("\"%s\", \"%s\", %.2f, %.2f, \"%s\", \"%s\", \"%s\", %d, \"%s\", \"%s\", \"%s\", \"%s\"",
+                    book.title, book.author, book.usedPrice, book.newPrice, book.genre, book.isbnCode, book.releaseDate.toString(),
+                    book.pageLength, book.language, book.link, book.paperbackImageLink, book.massImageLink);
 
-            //BCOBB: Delete this block of print methods once I get this data spit into some sort of file.
-            System.out.println(book.title);
-            System.out.println(book.author);
-            System.out.printf("$%.2f\n", book.usedPrice);
-            System.out.printf("$%.2f\n", book.newPrice);
-            System.out.println(book.link);
-            System.out.println(book.isbnCode);
-            System.out.println(book.releaseDate);
-            System.out.println(book.pageLength);
-            System.out.println(book.language);
-            System.out.println(book.genre);
-            System.out.println(book.imageLink);
-            System.out.println();
+            writeLineToCSV(dataEntry);
+
+            System.out.println("Added " + book.title + " to the file.");
         }
     }
     
@@ -364,7 +353,8 @@ public class ThriftBooks_DataScraper
         System.out.println("Created the new web driver");
         return driver;
     }
-    
+
+
     static void BypassWebroot(@NotNull WebDriver driver)
     {
         try
@@ -379,6 +369,7 @@ public class ThriftBooks_DataScraper
             Logger.getLogger(ThriftBooks_DataScraper.class.getName()).log(Level.SEVERE, null, ex);
         }
     }
+
 
     static void printBanner()
     {
@@ -409,6 +400,8 @@ public class ThriftBooks_DataScraper
 }
 
 
+
+
 class BookEntry
 {
     String title;
@@ -421,7 +414,8 @@ class BookEntry
     String genre;
     double newPrice;
     double usedPrice;
-    String imageLink;
+    String paperbackImageLink;
+    String massImageLink;
     
     
     BookEntry (){}
