@@ -1,21 +1,22 @@
 /*
 ============================================================ TO-DO LIST ============================================================
 
-1) SOMETHING IS HOGGING MEMORY! Process slows down considerably after a while. Potentially fix with the following implementations:
+1) ***DONE*** SOMETHING IS HOGGING MEMORY! Process slows down considerably after a while. Potentially fix with the following implementations:
     a) ***DONE*** Change the webdriver to run headless to try and preserve memory
-    b) Create a driver each time a page is scraped and then close the driver.
-    c) Try and find other memory leaks, maybe?
+    b) ***DONE*** Create a driver each time a page is scraped and then close the driver.
+    c) ***DONE*** Try and find other memory leaks, maybe?
 2) Start looking into pumping the data into a SQL database.
+    a) Reference link: https://stackoverflow.com/questions/2839321/connect-java-to-a-mysql-database
 3) Figure out how to automatically download the image files and either save them somewhere to reference later or embed them into the
         SQL database (is that even possible?)
-4) It would also be wise to write all of my debug lines to a log file. That way I can always troubleshoot and see where things might be
+4) ***DONE*** It would also be wise to write all of my debug lines to a log file. That way I can always troubleshoot and see where things might be
         going wrong down the road. I want to implement that.
 5) Add the book description to the BookEntry objects and store that string in the database as well.
-5) OPTIONAL: Maybe I want to reformat the date before I send it off? The simple "Date.toString()" method has a really ugly format and even
+5) ***DONE*** OPTIONAL: Maybe I want to reformat the date before I send it off? The simple "Date.toString()" method has a really ugly format and even
         Excel, which is pretty good at recognizing dates even if there is no date, doesn't recognize it as a date.
-6) OPTIONAL: I wonder if I'll ever actually use the "bookList" variable that's in the main function. Maybe I ought to refactor to just cut
+6) ***DONE*** OPTIONAL: I wonder if I'll ever actually use the "bookList" variable that's in the main function. Maybe I ought to refactor to just cut
         that out. Since I'm writing to the DB line by line instead of just dumping at the end of everything, I may never use it.
-7) OPTIONAL: Minor addition, but adding the page number to the book details that go to the CSV could be helpful for debugging, as well, even
+7) ***DONE*** OPTIONAL: Minor addition, but adding the page number to the book details that go to the CSV could be helpful for debugging, as well, even
         though that data wouldn't be necessary for the final DB later on.
 
 On occasion, run the scraper overnight and see how accurate my time estimate is. 2 minutes per page means 30 pages per hour. 120 pages should
@@ -30,9 +31,10 @@ import java.io.FileWriter;
 import java.io.IOException;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.time.temporal.TemporalAccessor;
 import java.util.*;
-import java.util.logging.Level;
-import java.util.logging.Logger;
 
 import org.jetbrains.annotations.NotNull;
 
@@ -50,6 +52,8 @@ public class ThriftBooks_DataScraper
     final static String BASE_URL = "https://www.thriftbooks.com";
     final static String GECKO_DRIVER_PATH = "C:/Users/smash/Downloads/geckodriver-v0.33.0-win64/geckodriver.exe";
     final static String SAVE_FILE = "C:/Users/smash/Desktop/Dad's Stuff/Coding/dataScrape_" + System.currentTimeMillis() +".csv";
+    final static String LOG_FILE = "C:/Users/smash/Desktop/Dad's Stuff/Coding/dataScrape_" + System.currentTimeMillis() +".log";
+    static boolean loggingEvents = false;
 
 
     public static void main(String[] args) throws InterruptedException
@@ -74,6 +78,7 @@ public class ThriftBooks_DataScraper
                 System.out.println("\t**ERROR: Last page number must be greater than first page number");
         }
         while (firstPage < 0 || lastPage < 0 || lastPage < firstPage);
+        keyboard.nextLine();
 
         if (firstPage == 0)
         {
@@ -81,10 +86,24 @@ public class ThriftBooks_DataScraper
             return;
         }
 
-        writeLineToCSV("Title, Author, Used Price, New Price, Genre, Format, ISBN Code, Release Date," +
-                        "Page Length, Language, ThriftBooks URL, Image Link 1, Image Link 2");
+        String logEventsResponse;
+        do
+        {
+            System.out.println("Would you like to log events to a file? [(y)es/(n)o]");
+            logEventsResponse = keyboard.nextLine();
+        }
+        while (!logEventsResponse.equalsIgnoreCase("yes") && !logEventsResponse.equalsIgnoreCase("no") && !logEventsResponse.equalsIgnoreCase("y") && !logEventsResponse.equalsIgnoreCase("n"));
 
-        System.out.println("Generated CSV file");
+        if (logEventsResponse.toLowerCase().charAt(0) == 'y')
+        {
+            loggingEvents = true;
+            eventLogEntry("Log file generated.");
+        }
+
+        writeLineToCSV("Title, Author, Used Price, New Price, Genre, Format, ISBN Code, Release Date," +
+                        "Page Length, Language, ThriftBooks URL, Image Link 1, Image Link 2, Page Number");
+
+        eventLogEntry("CSV file generated.");
 
         //WebDriver driver = getFFXDriver();
         //BypassWebroot(driver);
@@ -102,16 +121,32 @@ public class ThriftBooks_DataScraper
 
     static void writeLineToCSV(String dataEntry)
     {
-        FileWriter writer;
-        try
+        try (FileWriter writer = new FileWriter(SAVE_FILE, true))
         {
-            writer = new FileWriter(ThriftBooks_DataScraper.SAVE_FILE, true);
             writer.write(dataEntry + "\n");
-            writer.close();
         }
         catch (IOException ex)
         {
-            System.out.println("Failed to write to CSV file. Oops!");
+            System.out.println("ERROR: Failed to write to CSV file. Oops!");
+        }
+    }
+
+
+    static void eventLogEntry(String logEntry)
+    {
+        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy/MM/dd HH:mm:ss");
+        logEntry = formatter.format(LocalDateTime.now()) + ": " + logEntry;
+        System.out.println(logEntry);
+        if (loggingEvents)
+        {
+            try (FileWriter writer = new FileWriter(LOG_FILE, true))
+            {
+                writer.write(logEntry + "\n");
+            }
+            catch (IOException ex)
+            {
+                System.out.println("ERROR: Failed to write to log file. Oops!");
+            }
         }
     }
 
@@ -119,6 +154,7 @@ public class ThriftBooks_DataScraper
     static @NotNull ArrayList<String> getListOfBookURLs(int firstPage, int lastPage) throws InterruptedException
     {
         WebDriver driver = getFFXDriver();
+        eventLogEntry("Created the webdriver object to scrape for the book URLs.");
         ArrayList<String> listOfBookURLs = new ArrayList<>();
         Wait<WebDriver> wait = new WebDriverWait(driver, 2);
 
@@ -139,11 +175,11 @@ public class ThriftBooks_DataScraper
                 String bookURL = book.getAttribute("href");
                 listOfBookURLs.add(bookURL);
             }
-            System.out.println("Got the list of books from page " + pageNo);
+            eventLogEntry("Got a list of book links from page " + pageNo);
         }
 
         Thread.sleep(250);
-        System.out.println("I got " + listOfBookURLs.size() + " books!");
+        eventLogEntry("retrieved " + listOfBookURLs.size() + " book links from " + (lastPage - firstPage + 1) + " pages.");
 
         driver.close();
         return listOfBookURLs;
@@ -153,6 +189,7 @@ public class ThriftBooks_DataScraper
     static void scrapeBookPages(@NotNull ArrayList<String> listOfBookURLs) throws InterruptedException
     {
         WebDriver driver = getFFXDriver();
+        eventLogEntry("Created the webdriver object to scrape the book URLs for book data.");
         Wait<WebDriver> wait = new WebDriverWait(driver, 2);
         for (String bookURL : listOfBookURLs)
         {
@@ -160,6 +197,7 @@ public class ThriftBooks_DataScraper
             try
             {
                 BookEntry book = new BookEntry();
+                book.pageNo = (listOfBookURLs.indexOf(bookURL) / 30) + 1;
                 book.link = bookURL;
                 driver.navigate().to(book.link);
                 Thread.sleep(400);
@@ -267,22 +305,24 @@ public class ThriftBooks_DataScraper
 
                 determineBestPriceSet(book);
 
-                String dataEntry = String.format("\"%s\",\"%s\",%.2f,%.2f,\"%s\",\"%s\",\"%s\",\"%s\",%d,\"%s\",\"%s\",\"%s\",\"%s\"",
-                        book.title, book.author, book.usedPrice, book.newPrice, book.genre, book.format, book.isbnCode, book.releaseDate.toString(),
-                        book.pageLength, book.language, book.link, book.paperbackImageLink, book.massImageLink);
+                DateTimeFormatter formatter = DateTimeFormatter.ofPattern("MM/yyyy");
+
+                String dataEntry = String.format("\"%s\",\"%s\",%.2f,%.2f,\"%s\",\"%s\",\"%s\",\"%s\",%d,\"%s\",\"%s\",\"%s\",\"%s\",%d",
+                        book.title, book.author, book.usedPrice, book.newPrice, book.genre, book.format, book.isbnCode, formatter.format((TemporalAccessor) book.releaseDate),
+                        book.pageLength, book.language, book.link, book.paperbackImageLink, book.massImageLink, book.pageNo);
 
                 writeLineToCSV(dataEntry);
 
-                System.out.printf("Successfully added book number %,d titled \"%s\" to the file.\n", (1 + listOfBookURLs.indexOf(bookURL)), book.title);
+                eventLogEntry(String.format("Successfully added book number %,d titled \"%s\" to the file.\n", (1 + listOfBookURLs.indexOf(bookURL)), book.title));
             }
             catch (TimeoutException e)
             {
-                System.out.println("Error: Selenium timed out when trying to access the page for book number " + listOfBookURLs.indexOf(bookURL) + ": " + bookURL );
+                eventLogEntry("Error: Selenium timed out when trying to access the page for book number " + listOfBookURLs.indexOf(bookURL) + ": " + bookURL );
                 throw new TimeoutException(e);
             }
             catch (StaleElementReferenceException e)
             {
-                System.out.println("Error: Selenium couldn't locate a particular page element for book number " + listOfBookURLs.indexOf(bookURL) + ": " + bookURL );
+                eventLogEntry("Error: Selenium couldn't locate a particular page element for book number " + listOfBookURLs.indexOf(bookURL) + ": " + bookURL );
                 throw new TimeoutException(e);
             }
             long currentBookEndTime = System.nanoTime();
@@ -297,6 +337,7 @@ public class ThriftBooks_DataScraper
     static void printTimeFromNanoseconds(int duration, boolean isBook)
     {
         int millis = 0, seconds = 0, minutes = 0, hours = 0, days = 0;
+        String timeString = "";
 
         if (duration > 1000)
         {
@@ -321,26 +362,28 @@ public class ThriftBooks_DataScraper
         }
 
         if (!isBook)
-            System.out.print("The scraping took ");
+            timeString += "The scraping took ";
         if (days > 0)
         {
-            System.out.print(days + " days, ");
+            timeString += String.format("%d days, ", days);
         }
         if (hours > 0)
         {
-            System.out.print(hours + " hours, ");
+            timeString += String.format("%d hours, ", hours);
         }
         if (minutes > 0)
         {
-            System.out.print(minutes + " minutes and ");
+            timeString += String.format("%d minutes ", minutes);
         }
 
-        System.out.print(seconds + "." + millis + " seconds");
+        timeString += String.format("%d.%d seconds", seconds, millis);
 
         if (isBook)
-            System.out.println(" between the last book and this one.");
+            timeString += (" between the last book and this one.");
         else
-            System.out.println(".");
+            timeString += (".");
+
+        eventLogEntry(timeString);
     }
 
 
@@ -433,7 +476,7 @@ public class ThriftBooks_DataScraper
         }
         catch (ParseException ex)
         {
-            System.out.println("Failed to parse date string...");
+            eventLogEntry("Failed to parse date/time value from text string...");
         }
         return resp;
     }
@@ -446,25 +489,24 @@ public class ThriftBooks_DataScraper
         FirefoxProfile profile = new FirefoxProfile();        
         ffxOptions.setCapability(FirefoxDriver.PROFILE, profile);
         ffxOptions.setHeadless(true);
-        //System.out.println("Created the new web driver");
         return new FirefoxDriver(ffxOptions);
     }
 
 
-    static void BypassWebroot(@NotNull WebDriver driver)
-    {
-        try
-        {
-            Thread.sleep(2000);
-            WebElement allowBTN = driver.findElement(By.id("allowButton"));
-            allowBTN.click();
-            System.out.println("Bypassed the Webroot filter page");
-        }
-        catch (InterruptedException ex)
-        {
-            Logger.getLogger(ThriftBooks_DataScraper.class.getName()).log(Level.SEVERE, null, ex);
-        }
-    }
+//    static void BypassWebroot(@NotNull WebDriver driver)
+//    {
+//        try
+//        {
+//            Thread.sleep(2000);
+//            WebElement allowBTN = driver.findElement(By.id("allowButton"));
+//            allowBTN.click();
+//            System.out.println("Bypassed the Webroot filter page");
+//        }
+//        catch (InterruptedException ex)
+//        {
+//            Logger.getLogger(ThriftBooks_DataScraper.class.getName()).log(Level.SEVERE, null, ex);
+//        }
+//    }
 
 
     static void printBanner()
@@ -513,6 +555,7 @@ class BookEntry
     double usedPrice;
     String paperbackImageLink;
     String massImageLink;
+    int pageNo;
 
     PriceStructure massMarketPrices = new PriceStructure("Paperback");
     PriceStructure paperbackPrices = new PriceStructure("Paperback");
