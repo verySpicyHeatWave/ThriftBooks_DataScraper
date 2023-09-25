@@ -1,19 +1,25 @@
 /*
 ============================================================ TO-DO LIST ============================================================
 
-1) Run the scraper overnight and see how accurate my time estimate is. 2 minutes per page means 30 pages per hour. 120 pages should
-        take about 4 hours and I should wind up with 3600 books in the CSV.
+1) SOMETHING IS HOGGING MEMORY! Process slows down considerably after a while. Potentially fix with the following implementations:
+    a) ***DONE*** Change the webdriver to run headless to try and preserve memory
+    b) Create a driver each time a page is scraped and then close the driver.
+    c) Try and find other memory leaks, maybe?
 2) Start looking into pumping the data into a SQL database.
 3) Figure out how to automatically download the image files and either save them somewhere to reference later or embed them into the
         SQL database (is that even possible?)
 4) It would also be wise to write all of my debug lines to a log file. That way I can always troubleshoot and see where things might be
         going wrong down the road. I want to implement that.
+5) Add the book description to the BookEntry objects and store that string in the database as well.
 5) OPTIONAL: Maybe I want to reformat the date before I send it off? The simple "Date.toString()" method has a really ugly format and even
         Excel, which is pretty good at recognizing dates even if there is no date, doesn't recognize it as a date.
 6) OPTIONAL: I wonder if I'll ever actually use the "bookList" variable that's in the main function. Maybe I ought to refactor to just cut
         that out. Since I'm writing to the DB line by line instead of just dumping at the end of everything, I may never use it.
 7) OPTIONAL: Minor addition, but adding the page number to the book details that go to the CSV could be helpful for debugging, as well, even
         though that data wouldn't be necessary for the final DB later on.
+
+On occasion, run the scraper overnight and see how accurate my time estimate is. 2 minutes per page means 30 pages per hour. 120 pages should
+        take about 4 hours and I should wind up with 3600 books in the CSV.
 
 ====================================================================================================================================
 */
@@ -24,19 +30,14 @@ import java.io.FileWriter;
 import java.io.IOException;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
-import java.util.ArrayList;
-import java.util.Date;
-import java.util.List;
-import java.util.Scanner;
+import java.util.*;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
 import org.jetbrains.annotations.NotNull;
 
 // Selenium Dependencies
-import org.openqa.selenium.By;
-import org.openqa.selenium.WebDriver;
-import org.openqa.selenium.WebElement;
+import org.openqa.selenium.*;
 import org.openqa.selenium.firefox.FirefoxDriver;
 import org.openqa.selenium.firefox.FirefoxOptions;
 import org.openqa.selenium.firefox.FirefoxProfile;
@@ -85,17 +86,17 @@ public class ThriftBooks_DataScraper
 
         System.out.println("Generated CSV file");
 
-        WebDriver driver = getFFXDriver();        
-        BypassWebroot(driver);
-        Thread.sleep(250);
+        //WebDriver driver = getFFXDriver();
+        //BypassWebroot(driver);
+        //Thread.sleep(250);
 
         long startTime = System.nanoTime();
 
-        ArrayList<BookEntry> bookList = getBookList(driver, firstPage, lastPage);
+        scrapeBookPages(getListOfBookURLs(firstPage, lastPage));
 
         long endTime = System.nanoTime();
         long duration = (endTime - startTime) / 1000000;
-        printTimeFromNanoseconds((int)duration);
+        printTimeFromNanoseconds((int)duration, false);
     }
 
 
@@ -115,18 +116,10 @@ public class ThriftBooks_DataScraper
     }
 
 
-    static @NotNull ArrayList<BookEntry> getBookList(WebDriver driver, int firstPage, int lastPage) throws InterruptedException
+    static @NotNull ArrayList<String> getListOfBookURLs(int firstPage, int lastPage) throws InterruptedException
     {
-        ArrayList<BookEntry> tempBookList = scrapeCatalogPages(driver, firstPage, lastPage);
-        scrapeBookPages(driver, tempBookList);
-
-        return tempBookList;
-    }
-
-
-    static @NotNull ArrayList<BookEntry> scrapeCatalogPages(WebDriver driver, int firstPage, int lastPage) throws InterruptedException
-    {
-        ArrayList<BookEntry> bookList = new ArrayList<>();
+        WebDriver driver = getFFXDriver();
+        ArrayList<String> listOfBookURLs = new ArrayList<>();
         Wait<WebDriver> wait = new WebDriverWait(driver, 2);
 
         for (int pageNo = firstPage; pageNo < lastPage + 1; pageNo++)
@@ -139,165 +132,169 @@ public class ThriftBooks_DataScraper
             wait.until(d -> driver.findElement(By.xpath("/html/body/div[4]/div/div[2]/div[2]/div[2]/div/div/div/div/div[2]/div[2]/div[1]/div/div[1]")).isDisplayed());
             Thread.sleep(500);
 
-            WebElement searchContainer = driver.findElement(By.xpath(   "/html/body/div[4]/div/div[2]/div[2]/div[2]/div/div/div/div/div[2]/div[2]/div[1]/div/div[1]"));
+            WebElement searchContainer = driver.findElement(By.xpath("/html/body/div[4]/div/div[2]/div[2]/div[2]/div/div/div/div/div[2]/div[2]/div[1]/div/div[1]"));
             List<WebElement> books = searchContainer.findElements(By.tagName("a"));
             for (WebElement book : books)
             {
-                BookEntry tempBook = new BookEntry();
-                boolean isABook = false;
-
-                List<WebElement> details = book.findElements(By.tagName("p"));
-                int counter = 1;
-                for (WebElement detail : details)
-                {
-                    if (detail.getText().contains("from:"))
-                    {
-                        break;
-                    }
-                    switch (counter)
-                    {   // Rule switch? Great suggestion, IDE!
-                        case 1 -> tempBook.title = detail.getText();
-                        case 2 -> tempBook.author = detail.getText();
-                    }
-                    counter++;
-                    isABook = true;
-                }
-
-                if (isABook)
-                {
-                    tempBook.link = book.getAttribute("href");
-                    bookList.add(tempBook);
-                }
+                String bookURL = book.getAttribute("href");
+                listOfBookURLs.add(bookURL);
             }
             System.out.println("Got the list of books from page " + pageNo);
         }
 
         Thread.sleep(250);
-        System.out.println("I got " + bookList.size() + " books!");
+        System.out.println("I got " + listOfBookURLs.size() + " books!");
 
-        return bookList;
+        driver.close();
+        return listOfBookURLs;
     }
 
 
-    static void scrapeBookPages(WebDriver driver, @NotNull ArrayList<BookEntry> bookList) throws InterruptedException
+    static void scrapeBookPages(@NotNull ArrayList<String> listOfBookURLs) throws InterruptedException
     {
+        WebDriver driver = getFFXDriver();
         Wait<WebDriver> wait = new WebDriverWait(driver, 2);
-        for (BookEntry book : bookList)
+        for (String bookURL : listOfBookURLs)
         {
-            driver.navigate().to(book.link);
-            Thread.sleep(400);
-            wait.until(d -> driver.findElement(By.xpath("//div[@class='WorkMeta-details is-collapsed']")).isDisplayed());
-
-            WebElement table = driver.findElement(By.xpath("//div[@class='WorkMeta-details is-collapsed']"));
-            List<WebElement> details = table.findElements(By.tagName("span"));
-            int index = -1;
-
-            WebElement pageContents = driver.findElement(By.xpath("//div[@class='Content']"));
-            List<WebElement> spans = pageContents.findElements(By.tagName("span"));
-            for (WebElement span : spans)
+            long currentBookStartTime = System.nanoTime();
+            try
             {
-                if (span.getAttribute("itemprop") != null && span.getAttribute("itemprop").toLowerCase().contains("name"))
-                {
-                    book.genre = span.getText();
-                    break;
-                }
-            }
+                BookEntry book = new BookEntry();
+                book.link = bookURL;
+                driver.navigate().to(book.link);
+                Thread.sleep(400);
+                wait.until(d -> driver.findElement(By.xpath("//div[@class='WorkMeta-details is-collapsed']")).isDisplayed());
 
-            for (WebElement detail : details)
-            {
-                index++;
-                if (detail.getText().toLowerCase().contains("isbn"))
-                {
-                    book.isbnCode = details.get(index + 1).getText();
-                    continue;
-                }
-                if (detail.getText().toLowerCase().contains("release"))
-                {
-                    book.releaseDate = parseDateFromStr(details.get(index + 1).getText());
-                    continue;
-                }
-                if (detail.getText().toLowerCase().contains("length"))
-                {
-                    String tempPageLength = details.get(index + 1).getText();
-                    tempPageLength = tempPageLength.replace(" Pages","");
-                    book.pageLength = Integer.parseInt(tempPageLength);
-                    continue;
-                }
-                if (detail.getText().toLowerCase().contains("language"))
-                {
-                    book.language = details.get(index + 1).getText();
-                    continue;
-                }
+                String titleAuthor = driver.getTitle();
+                titleAuthor = titleAuthor.replace(" book by ", "|");
+                String[] titleAuthorSplit = titleAuthor.split("\\|");
+                book.title = titleAuthorSplit[0];
+                book.author = titleAuthorSplit[0];
 
-                if (detail.getAttribute("itemprop") != null && book.genre == null && detail.getAttribute("itemprop").toLowerCase().contains("name"))
+                WebElement table = driver.findElement(By.xpath("//div[@class='WorkMeta-details is-collapsed']"));
+                List<WebElement> details = table.findElements(By.tagName("span"));
+                int index = -1;
+
+                WebElement pageContents = driver.findElement(By.xpath("//div[@class='Content']"));
+                List<WebElement> spans = pageContents.findElements(By.tagName("span"));
+                for (WebElement span : spans)
                 {
-                    book.genre = detail.getText();
-                }
-            }
-
-            WebElement buttonContainer = driver.findElement(By.xpath("//div[@class='WorkSelector-rowContainer']"));
-
-
-            List<WebElement> buttons = buttonContainer.findElements(By.tagName("button"));
-            for (WebElement button : buttons)
-            {
-                List<WebElement> buttDetails = button.findElements(By.xpath("./child::div"));
-                for (WebElement buttDetail : buttDetails)
-                {
-                    if (buttDetail.getText().equalsIgnoreCase("paperback"))
+                    if (span.getAttribute("itemprop") != null && span.getAttribute("itemprop").toLowerCase().contains("name"))
                     {
-                        WebElement priceRangeElement = buttDetail.findElement(By.xpath("./following-sibling::div[@class='']//span"));
-                        if (priceRangeElement.getText().contains("$"))
-                        {
-                            getNewAndUsedPrices(book.paperbackPrices, priceRangeElement.getText());
-                        }
-                        button.click();
-                        Thread.sleep(150);
-                        WebElement image = driver.findElement(By.xpath("//img[@itemprop='image']"));
-                        book.paperbackImageLink = image.getAttribute("src");
+                        book.genre = span.getText();
+                        break;
+                    }
+                }
 
+                for (WebElement detail : details)
+                {
+                    index++;
+                    if (detail.getText().toLowerCase().contains("isbn"))
+                    {
+                        book.isbnCode = details.get(index + 1).getText();
+                        continue;
+                    }
+                    if (detail.getText().toLowerCase().contains("release"))
+                    {
+                        book.releaseDate = parseDateFromStr(details.get(index + 1).getText());
+                        continue;
+                    }
+                    if (detail.getText().toLowerCase().contains("length"))
+                    {
+                        String tempPageLength = details.get(index + 1).getText();
+                        tempPageLength = tempPageLength.replace(" Pages", "");
+                        book.pageLength = Integer.parseInt(tempPageLength);
+                        continue;
+                    }
+                    if (detail.getText().toLowerCase().contains("language"))
+                    {
+                        book.language = details.get(index + 1).getText();
                         continue;
                     }
 
-                    if (buttDetail.getText().equalsIgnoreCase("mass market paperback"))
+                    if (detail.getAttribute("itemprop") != null && book.genre == null && detail.getAttribute("itemprop").toLowerCase().contains("name"))
                     {
-                        button.click();
-                        Thread.sleep(150);
-                        WebElement image = driver.findElement(By.xpath("//img[@itemprop='image']"));
-                        book.massImageLink = image.getAttribute("src");
-                        if (book.usedPrice <= 0 || book.newPrice <= 0)
+                        book.genre = detail.getText();
+                    }
+                }
+
+                WebElement buttonContainer = driver.findElement(By.xpath("//div[@class='WorkSelector-rowContainer']"));
+                List<WebElement> buttons = buttonContainer.findElements(By.tagName("button"));
+                for (WebElement button : buttons)
+                {
+                    List<WebElement> buttDetails = button.findElements(By.xpath("./child::div"));
+                    for (WebElement buttDetail : buttDetails)
+                    {
+                        if (buttDetail.getText().equalsIgnoreCase("paperback"))
                         {
                             WebElement priceRangeElement = buttDetail.findElement(By.xpath("./following-sibling::div[@class='']//span"));
-                            getNewAndUsedPrices(book.massMarketPrices, priceRangeElement.getText());
-                        }
-                        continue;
-                    }
+                            if (priceRangeElement.getText().contains("$"))
+                            {
+                                getNewAndUsedPrices(book.paperbackPrices, priceRangeElement.getText());
+                            }
+                            button.click();
+                            Thread.sleep(150);
+                            WebElement image = driver.findElement(By.xpath("//img[@itemprop='image']"));
+                            book.paperbackImageLink = image.getAttribute("src");
 
-                    if (buttDetail.getText().equalsIgnoreCase("hardcover"))
-                    {
-                        WebElement priceRangeElement = buttDetail.findElement(By.xpath("./following-sibling::div[@class='']//span"));
-                        if (priceRangeElement.getText().contains("$"))
+                            continue;
+                        }
+
+                        if (buttDetail.getText().equalsIgnoreCase("mass market paperback"))
                         {
-                            getNewAndUsedPrices(book.hardcoverPrices, priceRangeElement.getText());
+                            button.click();
+                            Thread.sleep(150);
+                            WebElement image = driver.findElement(By.xpath("//img[@itemprop='image']"));
+                            book.massImageLink = image.getAttribute("src");
+                            if (book.usedPrice <= 0 || book.newPrice <= 0)
+                            {
+                                WebElement priceRangeElement = buttDetail.findElement(By.xpath("./following-sibling::div[@class='']//span"));
+                                getNewAndUsedPrices(book.massMarketPrices, priceRangeElement.getText());
+                            }
+                            continue;
+                        }
+
+                        if (buttDetail.getText().equalsIgnoreCase("hardcover"))
+                        {
+                            WebElement priceRangeElement = buttDetail.findElement(By.xpath("./following-sibling::div[@class='']//span"));
+                            if (priceRangeElement.getText().contains("$"))
+                            {
+                                getNewAndUsedPrices(book.hardcoverPrices, priceRangeElement.getText());
+                            }
                         }
                     }
                 }
+
+                determineBestPriceSet(book);
+
+                String dataEntry = String.format("\"%s\",\"%s\",%.2f,%.2f,\"%s\",\"%s\",\"%s\",\"%s\",%d,\"%s\",\"%s\",\"%s\",\"%s\"",
+                        book.title, book.author, book.usedPrice, book.newPrice, book.genre, book.format, book.isbnCode, book.releaseDate.toString(),
+                        book.pageLength, book.language, book.link, book.paperbackImageLink, book.massImageLink);
+
+                writeLineToCSV(dataEntry);
+
+                System.out.printf("Successfully added book number %,d titled \"%s\" to the file.\n", (1 + listOfBookURLs.indexOf(bookURL)), book.title);
             }
+            catch (TimeoutException e)
+            {
+                System.out.println("Error: Selenium timed out when trying to access the page for book number " + listOfBookURLs.indexOf(bookURL) + ": " + bookURL );
+                throw new TimeoutException(e);
+            }
+            catch (StaleElementReferenceException e)
+            {
+                System.out.println("Error: Selenium couldn't locate a particular page element for book number " + listOfBookURLs.indexOf(bookURL) + ": " + bookURL );
+                throw new TimeoutException(e);
+            }
+            long currentBookEndTime = System.nanoTime();
 
-            determineBestPriceSet(book);
-
-            String dataEntry = String.format("\"%s\",\"%s\",%.2f,%.2f,\"%s\",\"%s\",\"%s\",\"%s\",%d,\"%s\",\"%s\",\"%s\",\"%s\"",
-                    book.title, book.author, book.usedPrice, book.newPrice, book.genre, book.format, book.isbnCode, book.releaseDate.toString(),
-                    book.pageLength, book.language, book.link, book.paperbackImageLink, book.massImageLink);
-
-            writeLineToCSV(dataEntry);
-
-            System.out.println("Successfully added book number " + (1 + bookList.indexOf(book)) + " titled " + book.title + " to the file.");
+            long duration = (currentBookEndTime - currentBookStartTime) / 1000000;
+            printTimeFromNanoseconds((int)duration, true);
         }
+        driver.close();
     }
     
 
-    static void printTimeFromNanoseconds(int duration)
+    static void printTimeFromNanoseconds(int duration, boolean isBook)
     {
         int millis = 0, seconds = 0, minutes = 0, hours = 0, days = 0;
 
@@ -323,7 +320,8 @@ public class ThriftBooks_DataScraper
             hours = hours / 24;
         }
 
-        System.out.print("The scraping took ");
+        if (!isBook)
+            System.out.print("The scraping took ");
         if (days > 0)
         {
             System.out.print(days + " days, ");
@@ -337,7 +335,12 @@ public class ThriftBooks_DataScraper
             System.out.print(minutes + " minutes and ");
         }
 
-        System.out.print(seconds + "." + millis + " seconds. \n");
+        System.out.print(seconds + "." + millis + " seconds");
+
+        if (isBook)
+            System.out.println(" between the last book and this one.");
+        else
+            System.out.println(".");
     }
 
 
@@ -442,9 +445,9 @@ public class ThriftBooks_DataScraper
         FirefoxOptions ffxOptions = new FirefoxOptions();
         FirefoxProfile profile = new FirefoxProfile();        
         ffxOptions.setCapability(FirefoxDriver.PROFILE, profile);
-        WebDriver driver = new FirefoxDriver();
-        System.out.println("Created the new web driver");
-        return driver;
+        ffxOptions.setHeadless(true);
+        //System.out.println("Created the new web driver");
+        return new FirefoxDriver(ffxOptions);
     }
 
 
