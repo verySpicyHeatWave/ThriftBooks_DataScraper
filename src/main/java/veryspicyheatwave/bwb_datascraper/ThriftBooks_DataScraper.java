@@ -21,6 +21,8 @@
 
 On occasion, run the scraper overnight and see how accurate my time estimate is. 2 minutes per page means 30 pages per hour. 120 pages should
         take about 4 hours and I should wind up with 3600 books in the CSV.
+The scrapeBookPages() method needs some refactoring, there's a lot in there that I think could be extracted into new methods if I'm a smart little
+        boy about it.
 
 ====================================================================================================================================
 */
@@ -33,7 +35,6 @@ import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
-import java.time.temporal.TemporalAccessor;
 import java.util.*;
 
 import org.jetbrains.annotations.NotNull;
@@ -201,8 +202,8 @@ public class ThriftBooks_DataScraper
                 book.link = bookURL;
                 driver.navigate().to(book.link);
                 Thread.sleep(400);
-                wait.until(d -> driver.findElement(By.xpath("//div[@class='WorkMeta-details is-collapsed']")).isDisplayed());
 
+                wait.until(d -> driver.findElement(By.xpath("//div[@class='WorkMeta-details is-collapsed']")).isDisplayed());
                 String titleAuthor = driver.getTitle();
                 titleAuthor = titleAuthor.replace(" book by ", "|");
                 String[] titleAuthorSplit = titleAuthor.split("\\|");
@@ -213,7 +214,10 @@ public class ThriftBooks_DataScraper
                 List<WebElement> details = table.findElements(By.tagName("span"));
                 int index = -1;
 
+                wait.until(d -> driver.findElement(By.xpath("//div[@class='Content']")).isDisplayed());
                 WebElement pageContents = driver.findElement(By.xpath("//div[@class='Content']"));
+
+                Thread.sleep(400);
                 List<WebElement> spans = pageContents.findElements(By.tagName("span"));
                 for (WebElement span : spans)
                 {
@@ -305,25 +309,25 @@ public class ThriftBooks_DataScraper
 
                 determineBestPriceSet(book);
 
-                DateTimeFormatter formatter = DateTimeFormatter.ofPattern("MM/yyyy");
+                SimpleDateFormat formatter = new SimpleDateFormat("MM/yyyy");
 
                 String dataEntry = String.format("\"%s\",\"%s\",%.2f,%.2f,\"%s\",\"%s\",\"%s\",\"%s\",%d,\"%s\",\"%s\",\"%s\",\"%s\",%d",
-                        book.title, book.author, book.usedPrice, book.newPrice, book.genre, book.format, book.isbnCode, formatter.format((TemporalAccessor) book.releaseDate),
+                        book.title, book.author, book.usedPrice, book.newPrice, book.genre, book.format, book.isbnCode, formatter.format(book.releaseDate),
                         book.pageLength, book.language, book.link, book.paperbackImageLink, book.massImageLink, book.pageNo);
 
                 writeLineToCSV(dataEntry);
 
-                eventLogEntry(String.format("Successfully added book number %,d titled \"%s\" to the file.\n", (1 + listOfBookURLs.indexOf(bookURL)), book.title));
+                eventLogEntry(String.format("Successfully added book number %,d titled \"%s\" to the file.", (1 + listOfBookURLs.indexOf(bookURL)), book.title));
             }
-            catch (TimeoutException e)
+            catch (org.openqa.selenium.TimeoutException e)
             {
-                eventLogEntry("Error: Selenium timed out when trying to access the page for book number " + listOfBookURLs.indexOf(bookURL) + ": " + bookURL );
-                throw new TimeoutException(e);
+                eventLogEntry("Error: Selenium timed out when trying to access something on the page for book number " + (1 + listOfBookURLs.indexOf(bookURL)) + ": " + bookURL );
+                eventLogEntry(e.getMessage());
             }
-            catch (StaleElementReferenceException e)
+            catch (org.openqa.selenium.StaleElementReferenceException e)
             {
-                eventLogEntry("Error: Selenium couldn't locate a particular page element for book number " + listOfBookURLs.indexOf(bookURL) + ": " + bookURL );
-                throw new TimeoutException(e);
+                eventLogEntry("Error: Selenium couldn't locate a particular page element for book number " + (1 + listOfBookURLs.indexOf(bookURL)) + ": " + bookURL );
+                eventLogEntry(e.getMessage());
             }
             long currentBookEndTime = System.nanoTime();
 
@@ -379,9 +383,9 @@ public class ThriftBooks_DataScraper
         timeString += String.format("%d.%d seconds", seconds, millis);
 
         if (isBook)
-            timeString += (" between the last book and this one.");
+            timeString += (" between the last book and this one.\n");
         else
-            timeString += (".");
+            timeString += (".\n");
 
         eventLogEntry(timeString);
     }
