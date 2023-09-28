@@ -1,30 +1,13 @@
 /*
 ============================================================ TO-DO LIST ============================================================
 
-1) SOMETHING IS HOGGING MEMORY! Process slows down considerably after a while. Potentially fix with the following implementations:
-    a) ***DONE*** Change the webdriver to run headless to try and preserve memory
-    b) ***DONE*** Create a driver each time a page is scraped and then close the driver.
-    c) ***DONE*** Try and find other memory leaks, maybe?
-    d) I'm not properly closing the webdrivers. Need to put them all into try-with-resources blocks.
-2) Start looking into pumping the data into a SQL database.
+1) Start looking into pumping the data into a SQL database.
     a) Reference link: https://stackoverflow.com/questions/2839321/connect-java-to-a-mysql-database
-3) Figure out how to automatically download the image files and either save them somewhere to reference later or embed them into the
+2) Figure out how to automatically download the image files and either save them somewhere to reference later or embed them into the
         SQL database (is that even possible?)
-4) ***DONE*** It would also be wise to write all of my debug lines to a log file. That way I can always troubleshoot and see where things might be
-        going wrong down the road. I want to implement that.
-5) ***NVM LOL*** This triples the amount of time it takes. Not worth it. Add the book description to the BookEntry objects and store that string in the database as well.
-5) ***DONE*** OPTIONAL: Maybe I want to reformat the date before I send it off? The simple "Date.toString()" method has a really ugly format and even
-        Excel, which is pretty good at recognizing dates even if there is no date, doesn't recognize it as a date.
-6) ***DONE*** OPTIONAL: I wonder if I'll ever actually use the "bookList" variable that's in the main function. Maybe I ought to refactor to just cut
-        that out. Since I'm writing to the DB line by line instead of just dumping at the end of everything, I may never use it.
-7) ***DONE*** OPTIONAL: Minor addition, but adding the page number to the book details that go to the CSV could be helpful for debugging, as well, even
-        though that data wouldn't be necessary for the final DB later on.
 
 On occasion, run the scraper overnight and see how accurate my time estimate is. 2 minutes per page means 30 pages per hour. 120 pages should
         take about 4 hours and I should wind up with 3600 books in the CSV.
-I should figure out how to test my code for memory leaks, I think I may have one.
-***DONE*** The scrapeBookPages() method needs some refactoring, there's a lot in there that I think could be extracted into new methods if I'm a smart little
-        boy about it.
 
 ====================================================================================================================================
 */
@@ -59,6 +42,8 @@ public class ThriftBooks_DataScraper
     final static String LOG_FILE = "C:/Users/smash/Desktop/Dad's Stuff/Coding/dataScrape_" + System.currentTimeMillis() +".log";
     static boolean loggingEvents = false;
 
+    static Genre filterGenre;
+
 
     public static void main(String[] args)
     {
@@ -90,6 +75,9 @@ public class ThriftBooks_DataScraper
             return;
         }
 
+        filterGenre = getBookGenre(keyboard);
+        System.out.println(filterGenre);
+
         String logEventsResponse;
         do
         {
@@ -116,6 +104,25 @@ public class ThriftBooks_DataScraper
         long endTime = System.nanoTime();
         long duration = (endTime - startTime) / 1000000;
         printTimeFromNanoseconds((int)duration, false);
+    }
+
+
+    static Genre getBookGenre(Scanner keyboard)
+    {
+        System.out.println("Enter the number of which genre would you like to get: ");
+
+        for (Genre g : Genre.values())
+        {
+            System.out.printf("[%d]: %s\n", g.ordinal(), g.getDisplayString());
+        }
+        int selection = keyboard.nextInt();
+
+        while (selection < 0 || selection > Genre.values().length)
+        {
+            System.out.println("Invalid selection. Try again. ");
+        }
+
+        return Genre.values()[selection];
     }
 
 
@@ -170,7 +177,7 @@ public class ThriftBooks_DataScraper
             {
                 driver.navigate().to("about:blank");
                 Thread.sleep(500);
-                String pageURL = BASE_URL + "/browse/#b.s=mostPopular-desc&b.p=" + pageNo + "&b.pp=30&b.oos";
+                String pageURL = BASE_URL + "/browse/?b.search=#b.s=mostPopular-desc&b.p=" + pageNo + "&b.pp=30&b.pt=1&b.f.t%5B%5D=" + filterGenre.getFilterNo();
                 driver.get(pageURL);
                 Thread.sleep(2000);
                 System.out.println(driver.getTitle());
@@ -232,22 +239,13 @@ public class ThriftBooks_DataScraper
                         book.author = titleAuthorSplit[1];
                     else
                         book.author = "Who??";
+                    book.genre = filterGenre.getDisplayString();
 
                     WebElement table = driver.findElement(By.xpath("//div[@class='WorkMeta-details is-collapsed']"));
                     List<WebElement> details = table.findElements(By.tagName("span"));
                     getTableDetails(details, book);
 
                     wait.until(d -> driver.findElement(By.xpath("//div[@class='Content']")).isDisplayed());
-                    WebElement pageContents = driver.findElement(By.xpath("//div[@class='Content']"));
-                    List<WebElement> spans = pageContents.findElements(By.tagName("span"));
-                    for (WebElement span : spans)
-                    {
-                        if (span.getAttribute("itemprop") != null && span.getAttribute("itemprop").toLowerCase().contains("name"))
-                        {
-                            book.genre = span.getText();
-                            break;
-                        }
-                    }
 
                     WebElement buttonContainer = driver.findElement(By.xpath("//div[@class='WorkSelector-rowContainer']"));
                     List<WebElement> buttons = buttonContainer.findElements(By.tagName("button"));
@@ -617,5 +615,52 @@ class PriceStructure
     PriceStructure (String format)
     {
         this.format = format;
+    }
+}
+
+
+
+enum Genre
+{
+    LITERATURE (13902, "Literary Fiction"),
+    HISTORY (13526, "History"),
+    RELIGION (14858, "Religion and Spirituality"),
+    CHILDREN (12466, "Children's Books"),
+    BIOGRAPHICAL (12206, "Biographies"),
+    BUSINESS (12319, "Business"),
+    SELF_HELP (15049, "Self-Help Books"),
+    POLITICAL_SCIENCE (14641, "Political Science"),
+    PHILOSOPHY (14569, "Philosophy"),
+    ECONOMICS (12996, "Economics"),
+    LAW (13829, "Law Books"),
+    SCI_FI(15011, "Science Fiction"),
+    FANTASY (13184, "Fantasy"),
+    COMICS (12596, "Graphic Novels"),
+    YOUNG_ADULT (15370, "Young Adult Fiction"),
+    ART (12045, "Art Books"),
+    HORROR (13564, "Horror"),
+    HUMOR (13599, "Humor and Entertainment"),
+    PROGRAMMING(12637, "Programming"),
+    ROMANCE (14929, "Romance"),
+    MYSTERY (14236, "Mystery"),
+    CONTEMPORARY (12667, "Contemporary Fiction");
+
+    private final int filterNo;
+    private final String displayString;
+
+    Genre(int filterNo, String displayString)
+    {
+        this.filterNo = filterNo;
+        this.displayString = displayString;
+    }
+
+    public String getDisplayString()
+    {
+        return displayString;
+    }
+
+    public int getFilterNo()
+    {
+        return filterNo;
     }
 }
