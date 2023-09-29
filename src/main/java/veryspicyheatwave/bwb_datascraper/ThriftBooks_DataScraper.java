@@ -1,4 +1,3 @@
-//region Development Notes
 /*
 ============================================================ TO-DO LIST ============================================================
 
@@ -13,8 +12,6 @@ On occasion, run the scraper overnight and see how accurate my time estimate is.
 
 ====================================================================================================================================
 */
-//endregion
-
 
 
 //region Import Statements
@@ -51,8 +48,6 @@ public class ThriftBooks_DataScraper
     //endregion
 
 
-
-    //region Void Methods
     public static void main(String[] args)
     {
         printBanner();
@@ -95,6 +90,68 @@ public class ThriftBooks_DataScraper
         long duration = (endTime - startTime) / 1000000;
         eventLogEntry("Task complete in " + printDurationFromNanoseconds((int)duration));
     }
+
+
+    //region Primary WebScraper Methods
+    static @NotNull ArrayList<String> getListOfBookURLs(int firstPage, int lastPage)
+    {
+        WebDriver driver = getFFXDriver();
+        ArrayList<String> listOfBookURLs = new ArrayList<>();
+        eventLogEntry("Created the webdriver object to scrape for the book URLs");
+        Wait<WebDriver> wait = new WebDriverWait(driver, 4);
+
+        for (int pageNo = firstPage; pageNo < lastPage + 1; pageNo++)
+        {
+            try
+            {
+                long currentPageStartTime = System.nanoTime();
+                driver.navigate().to("about:blank");
+                Thread.sleep(666);
+                String pageURL = BASE_URL + "/browse/?b.search=#b.s=mostPopular-desc&b.p=" + pageNo + "&b.pp=30&b.pt=1&b.f.t%5B%5D=" + filterGenre.getFilterNo();
+                driver.get(pageURL);
+                wait.until(d -> driver.findElement(By.xpath("/html/body/div[4]/div/div[2]/div/div[2]/div/div/div/div/div[2]/div[2]/div[1]/div/div[1]")).isDisplayed());
+
+                WebElement searchContainer = driver.findElement(By.xpath("/html/body/div[4]/div/div[2]/div/div[2]/div/div/div/div/div[2]/div[2]/div[1]/div/div[1]"));
+                List<WebElement> books = searchContainer.findElements(By.tagName("a"));
+                for (WebElement book : books)
+                {
+                    String bookURL = book.getAttribute("href");
+                    listOfBookURLs.add(bookURL);
+                }
+                eventLogEntry("Got a list of book links from page " + pageNo);
+                long currentPageEndTime = System.nanoTime();
+                long duration = (currentPageEndTime - currentPageStartTime) / 1000000;
+                eventLogEntry(printDurationFromNanoseconds((int) duration) + " spent scraping page " + pageNo);
+                printMemoryUsageToEventLog();
+            }
+            catch (org.openqa.selenium.TimeoutException e)
+            {
+                eventLogEntry("Error in function getListOfBookURLs(): Selenium timed out when trying to access a book on catalog page " + pageNo);
+                eventLogEntry(e.getMessage());
+            }
+            catch (org.openqa.selenium.StaleElementReferenceException e)
+            {
+                eventLogEntry("Error in function getListOfBookURLs(): Selenium couldn't locate a particular page element for catalog page number " + pageNo);
+                eventLogEntry(e.getMessage());
+            }
+            catch (InterruptedException ex)
+            {
+                eventLogEntry("Error in function getListOfBookURLs(): Sleep function failed while scraping catalog page " + pageNo);
+                eventLogEntry(ex.getMessage());
+            }
+            catch (Exception ex)
+            {
+                eventLogEntry("Error in function getListOfBookURLs(): Unhandled exception while scraping catalog page " + pageNo);
+                eventLogEntry(ex.getMessage());
+            }
+        }
+
+        eventLogEntry("Successfully retrieved " + listOfBookURLs.size() + " book links from " + (lastPage - firstPage + 1) + " pages");
+        driver.quit();
+        eventLogEntry("WebDriver instance successfully closed");
+        return listOfBookURLs;
+    }
+
 
 
     static void scrapeBookPages(@NotNull ArrayList<String> listOfBookURLs)
@@ -174,8 +231,10 @@ public class ThriftBooks_DataScraper
             eventLogEntry("WebDriver instance successfully closed");
         }
     }
+    //endregion
 
 
+    //region WebElement Parsers
     static void parseTitleAuthor(String titleAuthor, @NotNull BookEntry book)
     {
         titleAuthor = titleAuthor.replace(" book by ", "|");
@@ -281,6 +340,204 @@ public class ThriftBooks_DataScraper
     }
 
 
+    static String parseGenreString(@NotNull WebElement pageContents)
+    {
+        List<WebElement> spans = pageContents.findElements(By.tagName("span"));
+        for (WebElement span : spans)
+        {
+            if (span.getAttribute("itemprop") != null && span.getAttribute("itemprop").toLowerCase().contains("name"))
+            {
+                return span.getText();
+            }
+        }
+        return filterGenre.getDisplayString();
+    }
+
+
+    static Date parseDateFromStr(String dateStr)
+    {
+        SimpleDateFormat format = new SimpleDateFormat("MMMM yyyy");
+
+        Date resp = new Date();
+        try
+        {
+            resp = null;
+            resp = format.parse(dateStr);
+        }
+        catch (ParseException ex)
+        {
+            eventLogEntry("Failed to parse date/time value from text string...");
+        }
+        return resp;
+    }
+    //endregion
+
+
+    //region File I/O and Print Methods
+    static void printBanner()
+    {
+        // Hey, I didn't know you could do a text block like that, that's pretty nice! Thanks, Java!
+        System.out.print("""
+                $$$$$$$$$$$$$$$$$$$$$$$$$$$$$$'               `$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$ \s
+                $$$$$$$$$$$$$$$$$$$$$$$$$$$$'                   `$$$$$$$$$$$$$$$$$$$$$$$$$$$$
+                $$$'`$$$$$$$$$$$$$'`$$$$$$!                       !$$$$$$'`$$$$$$$$$$$$$'`$$$
+                $$$$  $$$$$$$$$$$  $$$$$$$                         $$$$$$$  $$$$$$$$$$$  $$$$
+                $$$$. `$' \\' \\$`  $$$$$$$!                         !$$$$$$$  '$/ `/ `$' .$$$$
+                $$$$$. !\\  i  i .$$$$$$$$                           $$$$$$$$. i  i  /! .$$$$$
+                $$$$$$   `--`--.$$$$$$$$$                           $$$$$$$$$.--'--'   $$$$$$
+                $$$$$$L        `$$$$$^^$$                           $$^^$$$$$'        J$$$$$$
+                $$$$$$$.   .'   ""~   $$$    $.                 .$  $$$   ~""   `.   .$$$$$$$
+                $$$$$$$$.  ;      .e$$$$$!    $$.             .$$  !$$$$$e,      ;  .$$$$$$$$
+                $$$$$$$$$   `.$$$$$$$$$$$$     $$$.         .$$$   $$$$$$$$$$$$.'   $$$$$$$$$
+                $$$$$$$$    .$$$$$$$$$$$$$!     $$`$$$$$$$$'$$    !$$$$$$$$$$$$$.    $$$$$$$$
+                $JT&yd$     $$$$$$$$$$$$$$$$.    $    $$    $   .$$$$$$$$$$$$$$$$     $by&TL$
+                                                 $    $$    $
+                                                 $.   $$   .$
+                                                 `$        $'
+                                                  `$$$$$$$$'
+
+                """);
+        System.out.println("B. Cobb's Selenium Web scraper for Thrift Books");
+        System.out.println("The super fun but slightly useless learning project!\n\n");
+    }
+
+
+    static void writeLineToCSV(String dataEntry)
+    {
+        try (FileWriter writer = new FileWriter(SAVE_FILE, true))
+        {
+            writer.write(dataEntry + "\n");
+        }
+        catch (IOException ex)
+        {
+            System.out.println("ERROR: Failed to write to CSV file. Oops!");
+        }
+    }
+
+
+    static void eventLogEntry(String logEntry)
+    {
+        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy/MM/dd HH:mm:ss");
+        logEntry = formatter.format(LocalDateTime.now()) + ":\t" + logEntry;
+        System.out.println(logEntry);
+        if (loggingEvents)
+        {
+            try (FileWriter writer = new FileWriter(LOG_FILE, true))
+            {
+                writer.write(logEntry + "\n");
+            }
+            catch (IOException ex)
+            {
+                System.out.println("ERROR: Failed to write to log file. Oops!");
+            }
+        }
+    }
+
+
+    static @NotNull String printDurationFromNanoseconds(int duration)
+    {
+        int millis = 0, seconds = 0, minutes = 0, hours = 0, days = 0;
+        String timeString = "";
+
+        if (duration > 1000)
+        {
+            millis = (duration % 1000);
+            seconds = (duration / 1000);
+        }
+
+        if (seconds > 60)
+        {
+            minutes = seconds / 60;
+            seconds = seconds % 60;
+        }
+        if (minutes > 60)
+        {
+            hours = minutes / 60;
+            minutes = minutes % 60;
+        }
+        if (duration > 24)
+        {
+            days = hours / 24;
+            hours = hours / 24;
+        }
+
+        if (days > 0)
+        {
+            timeString += String.format("%d days, ", days);
+        }
+        if (hours > 0)
+        {
+            timeString += String.format("%d hours, ", hours);
+        }
+        if (minutes > 0)
+        {
+            timeString += String.format("%d minutes ", minutes);
+        }
+
+        timeString += String.format("%d.%d seconds", seconds, millis);
+
+        return timeString;
+    }
+
+
+    static void printMemoryUsageToEventLog()
+    {
+        eventLogEntry(String.format("Memory usage: %d kb / %d kb", (Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()) / 1024, Runtime.getRuntime().totalMemory() / 1024));
+    }
+    //endregion
+
+
+    //region User Interaction Methods
+    static int getFirstOrLastPage(Scanner keyboard, @NotNull String page)
+    {
+        int resp;
+        if (page.equalsIgnoreCase("first"))
+        {
+            do
+            {
+                System.out.println("Enter the first page you want to read, or enter 0 to exit: ");
+                resp = keyboard.nextInt();
+                if (resp < 0)
+                    System.out.println("\t**ERROR: First page number must be at least 1");
+            }
+            while (resp < 0);
+        }
+        else if (page.equalsIgnoreCase("last"))
+        {
+            do
+            {
+                System.out.println("Enter the last page you want to read: ");
+                resp = keyboard.nextInt();
+                if (resp < 0)
+                    System.out.println("\t**ERROR: Last page number must be at least 1");
+            }
+            while (resp < 0);
+        }
+        else
+        {
+            resp = 1;
+        }
+        keyboard.nextLine();
+        return resp;
+    }
+
+
+    static boolean askIfUserWantsToLog(@NotNull Scanner keyboard)
+    {
+        String logEventsResponse;
+        do
+        {
+            System.out.println("Would you like to log events to a file? [(y)es/(n)o]");
+            logEventsResponse = keyboard.nextLine();
+        }
+        while (!logEventsResponse.equalsIgnoreCase("yes") && !logEventsResponse.equalsIgnoreCase("no") && !logEventsResponse.equalsIgnoreCase("y") && !logEventsResponse.equalsIgnoreCase("n"));
+
+        return logEventsResponse.toLowerCase().charAt(0) == 'y';
+    }
+    //endregion
+
+
+    //region Misc Utility Methods
     static void getNewAndUsedPrices(@NotNull PriceStructure respBook, @NotNull String priceString)
     {
         if (priceString.contains(" - "))
@@ -359,121 +616,6 @@ public class ThriftBooks_DataScraper
     }
 
 
-    static @NotNull String printDurationFromNanoseconds(int duration)
-    {
-        int millis = 0, seconds = 0, minutes = 0, hours = 0, days = 0;
-        String timeString = "";
-
-        if (duration > 1000)
-        {
-            millis = (duration % 1000);
-            seconds = (duration / 1000);
-        }
-
-        if (seconds > 60)
-        {
-            minutes = seconds / 60;
-            seconds = seconds % 60;
-        }
-        if (minutes > 60)
-        {
-            hours = minutes / 60;
-            minutes = minutes % 60;
-        }
-        if (duration > 24)
-        {
-            days = hours / 24;
-            hours = hours / 24;
-        }
-
-        if (days > 0)
-        {
-            timeString += String.format("%d days, ", days);
-        }
-        if (hours > 0)
-        {
-            timeString += String.format("%d hours, ", hours);
-        }
-        if (minutes > 0)
-        {
-            timeString += String.format("%d minutes ", minutes);
-        }
-
-        timeString += String.format("%d.%d seconds", seconds, millis);
-
-        return timeString;
-    }
-
-
-    static void writeLineToCSV(String dataEntry)
-    {
-        try (FileWriter writer = new FileWriter(SAVE_FILE, true))
-        {
-            writer.write(dataEntry + "\n");
-        }
-        catch (IOException ex)
-        {
-            System.out.println("ERROR: Failed to write to CSV file. Oops!");
-        }
-    }
-
-
-    static void eventLogEntry(String logEntry)
-    {
-        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy/MM/dd HH:mm:ss");
-        logEntry = formatter.format(LocalDateTime.now()) + ":\t" + logEntry;
-        System.out.println(logEntry);
-        if (loggingEvents)
-        {
-            try (FileWriter writer = new FileWriter(LOG_FILE, true))
-            {
-                writer.write(logEntry + "\n");
-            }
-            catch (IOException ex)
-            {
-                System.out.println("ERROR: Failed to write to log file. Oops!");
-            }
-        }
-    }
-
-
-    static void printMemoryUsageToEventLog()
-    {
-        eventLogEntry(String.format("Memory usage: %d kb / %d kb", (Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()) / 1024, Runtime.getRuntime().totalMemory() / 1024));
-    }
-
-
-    static void printBanner()
-    {
-        // Hey, I didn't know you could do a text block like that, that's pretty nice! Thanks, Java!
-        System.out.print("""
-                $$$$$$$$$$$$$$$$$$$$$$$$$$$$$$'               `$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$ \s
-                $$$$$$$$$$$$$$$$$$$$$$$$$$$$'                   `$$$$$$$$$$$$$$$$$$$$$$$$$$$$
-                $$$'`$$$$$$$$$$$$$'`$$$$$$!                       !$$$$$$'`$$$$$$$$$$$$$'`$$$
-                $$$$  $$$$$$$$$$$  $$$$$$$                         $$$$$$$  $$$$$$$$$$$  $$$$
-                $$$$. `$' \\' \\$`  $$$$$$$!                         !$$$$$$$  '$/ `/ `$' .$$$$
-                $$$$$. !\\  i  i .$$$$$$$$                           $$$$$$$$. i  i  /! .$$$$$
-                $$$$$$   `--`--.$$$$$$$$$                           $$$$$$$$$.--'--'   $$$$$$
-                $$$$$$L        `$$$$$^^$$                           $$^^$$$$$'        J$$$$$$
-                $$$$$$$.   .'   ""~   $$$    $.                 .$  $$$   ~""   `.   .$$$$$$$
-                $$$$$$$$.  ;      .e$$$$$!    $$.             .$$  !$$$$$e,      ;  .$$$$$$$$
-                $$$$$$$$$   `.$$$$$$$$$$$$     $$$.         .$$$   $$$$$$$$$$$$.'   $$$$$$$$$
-                $$$$$$$$    .$$$$$$$$$$$$$!     $$`$$$$$$$$'$$    !$$$$$$$$$$$$$.    $$$$$$$$
-                $JT&yd$     $$$$$$$$$$$$$$$$.    $    $$    $   .$$$$$$$$$$$$$$$$     $by&TL$
-                                                 $    $$    $
-                                                 $.   $$   .$
-                                                 `$        $'
-                                                  `$$$$$$$$'
-
-                """);
-        System.out.println("B. Cobb's Selenium Web scraper for Thrift Books");
-        System.out.println("The super fun but slightly useless learning project!\n\n");
-    }
-    //endregion
-
-
-
-    //region Return Methods
     static Genre getBookGenre(Scanner keyboard)
     {
         System.out.println("Enter the number of which genre would you like to get: ");
@@ -493,98 +635,6 @@ public class ThriftBooks_DataScraper
         return Genre.values()[selection];
     }
 
-
-    static String parseGenreString(@NotNull WebElement pageContents)
-    {
-        List<WebElement> spans = pageContents.findElements(By.tagName("span"));
-        for (WebElement span : spans)
-        {
-            if (span.getAttribute("itemprop") != null && span.getAttribute("itemprop").toLowerCase().contains("name"))
-            {
-                return span.getText();
-            }
-        }
-        return filterGenre.getDisplayString();
-    }
-
-
-    static @NotNull ArrayList<String> getListOfBookURLs(int firstPage, int lastPage)
-    {
-        WebDriver driver = getFFXDriver();
-        ArrayList<String> listOfBookURLs = new ArrayList<>();
-        eventLogEntry("Created the webdriver object to scrape for the book URLs");
-        Wait<WebDriver> wait = new WebDriverWait(driver, 4);
-
-        for (int pageNo = firstPage; pageNo < lastPage + 1; pageNo++)
-        {
-            try
-            {
-                long currentPageStartTime = System.nanoTime();
-                driver.navigate().to("about:blank");
-                Thread.sleep(666);
-                String pageURL = BASE_URL + "/browse/?b.search=#b.s=mostPopular-desc&b.p=" + pageNo + "&b.pp=30&b.pt=1&b.f.t%5B%5D=" + filterGenre.getFilterNo();
-                driver.get(pageURL);
-                wait.until(d -> driver.findElement(By.xpath("/html/body/div[4]/div/div[2]/div/div[2]/div/div/div/div/div[2]/div[2]/div[1]/div/div[1]")).isDisplayed());
-
-                WebElement searchContainer = driver.findElement(By.xpath("/html/body/div[4]/div/div[2]/div/div[2]/div/div/div/div/div[2]/div[2]/div[1]/div/div[1]"));
-                List<WebElement> books = searchContainer.findElements(By.tagName("a"));
-                for (WebElement book : books)
-                {
-                    String bookURL = book.getAttribute("href");
-                    listOfBookURLs.add(bookURL);
-                }
-                eventLogEntry("Got a list of book links from page " + pageNo);
-                long currentPageEndTime = System.nanoTime();
-                long duration = (currentPageEndTime - currentPageStartTime) / 1000000;
-                eventLogEntry(printDurationFromNanoseconds((int) duration) + " spent scraping page " + pageNo);
-                printMemoryUsageToEventLog();
-            }
-            catch (org.openqa.selenium.TimeoutException e)
-            {
-                eventLogEntry("Error in function getListOfBookURLs(): Selenium timed out when trying to access a book on catalog page " + pageNo);
-                eventLogEntry(e.getMessage());
-            }
-            catch (org.openqa.selenium.StaleElementReferenceException e)
-            {
-                eventLogEntry("Error in function getListOfBookURLs(): Selenium couldn't locate a particular page element for catalog page number " + pageNo);
-                eventLogEntry(e.getMessage());
-            }
-            catch (InterruptedException ex)
-            {
-                eventLogEntry("Error in function getListOfBookURLs(): Sleep function failed while scraping catalog page " + pageNo);
-                eventLogEntry(ex.getMessage());
-            }
-            catch (Exception ex)
-            {
-                eventLogEntry("Error in function getListOfBookURLs(): Unhandled exception while scraping catalog page " + pageNo);
-                eventLogEntry(ex.getMessage());
-            }
-        }
-
-        eventLogEntry("Successfully retrieved " + listOfBookURLs.size() + " book links from " + (lastPage - firstPage + 1) + " pages");
-        driver.quit();
-        eventLogEntry("WebDriver instance successfully closed");
-        return listOfBookURLs;
-    }
-
-
-    static Date parseDateFromStr(String dateStr)
-    {
-        SimpleDateFormat format = new SimpleDateFormat("MMMM yyyy");
-
-        Date resp = new Date();
-        try
-        {
-            resp = null;
-            resp = format.parse(dateStr);
-        }
-        catch (ParseException ex)
-        {
-            eventLogEntry("Failed to parse date/time value from text string...");
-        }
-        return resp;
-    }
-
     
     static @NotNull WebDriver getFFXDriver()
     {
@@ -595,54 +645,5 @@ public class ThriftBooks_DataScraper
         ffxOptions.setHeadless(true);
         return new FirefoxDriver(ffxOptions);
     }
-
-
-    static int getFirstOrLastPage(Scanner keyboard, @NotNull String page)
-    {
-        int resp;
-        if (page.equalsIgnoreCase("first"))
-        {
-            do
-            {
-                System.out.println("Enter the first page you want to read, or enter 0 to exit: ");
-                resp = keyboard.nextInt();
-                if (resp < 0)
-                    System.out.println("\t**ERROR: First page number must be at least 1");
-            }
-            while (resp < 0);
-        }
-        else if (page.equalsIgnoreCase("last"))
-        {
-            do
-            {
-                System.out.println("Enter the last page you want to read: ");
-                resp = keyboard.nextInt();
-                if (resp < 0)
-                    System.out.println("\t**ERROR: Last page number must be at least 1");
-            }
-            while (resp < 0);
-        }
-        else
-        {
-            resp = 1;
-        }
-        keyboard.nextLine();
-        return resp;
-    }
-
-
-    static boolean askIfUserWantsToLog(@NotNull Scanner keyboard)
-    {
-        String logEventsResponse;
-        do
-        {
-            System.out.println("Would you like to log events to a file? [(y)es/(n)o]");
-            logEventsResponse = keyboard.nextLine();
-        }
-        while (!logEventsResponse.equalsIgnoreCase("yes") && !logEventsResponse.equalsIgnoreCase("no") && !logEventsResponse.equalsIgnoreCase("y") && !logEventsResponse.equalsIgnoreCase("n"));
-
-        return logEventsResponse.toLowerCase().charAt(0) == 'y';
-    }
-
     //endregion
 }
