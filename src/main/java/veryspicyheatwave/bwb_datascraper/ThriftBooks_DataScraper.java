@@ -6,6 +6,7 @@
     a) Reference link: https://stackoverflow.com/questions/2839321/connect-java-to-a-mysql-database
 2) Figure out how to automatically download the image files and either save them somewhere to reference later or embed them into the
         SQL database (is that even possible?)
+    a) Reference link: https://www.sqlshack.com/upload-multiple-images-sql-server/
 
 On occasion, run the scraper overnight and see how accurate my time estimate is. 2 minutes per page means 30 pages per hour. 120 pages should
         take about 4 hours and I should wind up with 3600 books in the CSV.
@@ -13,6 +14,8 @@ On occasion, run the scraper overnight and see how accurate my time estimate is.
 ====================================================================================================================================
 */
 //endregion
+
+
 
 //region Import Statements
 package veryspicyheatwave.bwb_datascraper;
@@ -46,6 +49,7 @@ public class ThriftBooks_DataScraper
     static boolean loggingEvents = false;
     static Genre filterGenre;
     //endregion
+
 
 
     //region Void Methods
@@ -466,6 +470,7 @@ public class ThriftBooks_DataScraper
         System.out.println("The super fun but slightly useless learning project!\n\n");
     }
     //endregion
+
 
 
     //region Return Methods
