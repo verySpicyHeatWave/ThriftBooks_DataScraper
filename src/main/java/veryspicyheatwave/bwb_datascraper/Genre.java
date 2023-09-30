@@ -1,6 +1,6 @@
 package veryspicyheatwave.bwb_datascraper;
 
-enum Genre
+public enum Genre
 {
 
     SCI_FI(15011, "Science Fiction"),

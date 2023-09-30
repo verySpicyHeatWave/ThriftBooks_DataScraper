@@ -6,7 +6,6 @@ class BookEntry
 {
     String title;
     String author;
-    String link;
     String isbnCode;
     Date releaseDate;
     int pageLength;
@@ -15,12 +14,14 @@ class BookEntry
     String format;
     double newPrice;
     double usedPrice;
+    String link;
     String paperbackImageLink;
     String massImageLink;
+    String buttonName;
 
-    PriceStructure massMarketPrices = new PriceStructure("Paperback");
-    PriceStructure paperbackPrices = new PriceStructure("Paperback");
-    PriceStructure hardcoverPrices = new PriceStructure("Hardcover");
+    PriceStructure massMarketPrices = new PriceStructure("Paperback", "mass market paperback");
+    PriceStructure paperbackPrices = new PriceStructure("Paperback", "paperback");
+    PriceStructure hardcoverPrices = new PriceStructure("Hardcover", "hardcover");
 
 
     BookEntry (){}

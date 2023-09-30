@@ -5,10 +5,12 @@ class PriceStructure
     double newPrice;
     double usedPrice;
     String format;
+    String buttonName;
 
 
-    PriceStructure (String format)
+    PriceStructure (String format, String buttonName)
     {
         this.format = format;
+        this.buttonName = buttonName;
     }
 }

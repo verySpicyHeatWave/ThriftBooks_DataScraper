@@ -1,19 +1,3 @@
-/*
-============================================================ TO-DO LIST ============================================================
-
-1) Start looking into pumping the data into a SQL database.
-    a) Reference link: https://stackoverflow.com/questions/2839321/connect-java-to-a-mysql-database
-2) Figure out how to automatically download the image files and either save them somewhere to reference later or embed them into the
-        SQL database (is that even possible?)
-    a) Reference link: https://www.sqlshack.com/upload-multiple-images-sql-server/
-
-On occasion, run the scraper overnight and see how accurate my time estimate is. 2 minutes per page means 30 pages per hour. 120 pages should
-        take about 4 hours and I should wind up with 3600 books in the CSV.
-
-====================================================================================================================================
-*/
-
-
 //region Import Statements
 package veryspicyheatwave.bwb_datascraper;
 
@@ -40,28 +24,34 @@ public class ThriftBooks_DataScraper
 {
     //region Class-Wide Variables
     final static String BASE_URL = "https://www.thriftbooks.com";
+    final static String FILTER_URL = "&b.pp=30&b.f.lang%5B%5D=40&b.pt=1&b.f.t%5B%5D=";
     final static String GECKO_DRIVER = "geckodriver.exe";
     final static String SAVE_FILE = "dataScrape_" + System.currentTimeMillis() +".csv";
     final static String LOG_FILE = "dataScrape_" + System.currentTimeMillis() +".log";
     static boolean loggingEvents = false;
     static Genre filterGenre;
+    static PrimaryFilter filterPrimary;
     //endregion
 
 
     public static void main(String[] args)
     {
         printBanner();
+        Scanner keyboard = new Scanner(System.in);
+
+        loggingEvents = askIfUserWantsToLog(keyboard);
+        if (loggingEvents)
+            eventLogEntry("Log file generated");
 
         int firstPage;
         int lastPage;
-        Scanner keyboard = new Scanner(System.in);
 
         do
         {
             firstPage = getFirstOrLastPage(keyboard, "first");
             if (firstPage == 0)
             {
-                System.out.println("Exiting program...");
+                eventLogEntry("User chose to exit program...");
                 return;
             }
             lastPage = getFirstOrLastPage(keyboard, "last");
@@ -70,15 +60,16 @@ public class ThriftBooks_DataScraper
         }
         while (lastPage < firstPage);
 
+        filterPrimary = getPrimaryFilter(keyboard);
         filterGenre = getBookGenre(keyboard);
-        System.out.println(filterGenre);
+        //System.out.println(filterGenre);
 
-        loggingEvents = askIfUserWantsToLog(keyboard);
-        if (loggingEvents)
-            eventLogEntry("Log file generated");
+        eventLogEntry("User selected catalog pages " + firstPage + " to " + lastPage + " filtering by the " + filterPrimary.getDisplayString() + " " + filterGenre.getDisplayString() + " books");
+
 
         writeLineToCSV("Title, Author, Used Price, New Price, Genre, Format, ISBN Code, Release Date," +
                         "Page Length, Language, ThriftBooks URL, Image Link 1, Image Link 2");
+
         eventLogEntry("CSV file generated");
 
         long startTime = System.nanoTime();
@@ -107,7 +98,7 @@ public class ThriftBooks_DataScraper
                 long currentPageStartTime = System.nanoTime();
                 driver.navigate().to("about:blank");
                 Thread.sleep(666);
-                String pageURL = BASE_URL + "/browse/?b.search=#b.s=mostPopular-desc&b.p=" + pageNo + "&b.pp=30&b.pt=1&b.f.t%5B%5D=" + filterGenre.getFilterNo();
+                String pageURL = BASE_URL + filterPrimary.getFilterString() + pageNo + FILTER_URL + filterGenre.getFilterNo();
                 driver.get(pageURL);
                 wait.until(d -> driver.findElement(By.xpath("/html/body/div[4]/div/div[2]/div/div[2]/div/div/div/div/div[2]/div[2]/div[1]/div/div[1]")).isDisplayed());
 
@@ -174,19 +165,22 @@ public class ThriftBooks_DataScraper
                     wait.until(d -> driver.findElement(By.xpath("//div[@class='WorkMeta-details is-collapsed']")).isDisplayed());
                     parseTitleAuthor(driver.getTitle(), book);
 
-                    WebElement titleBlock = driver.findElement(By.xpath("//h1[@class='WorkMeta-title Alternative Alternative-title']"));
-                    if (titleBlock.getText() != null)
-                        book.title = titleBlock.getText();
-
-                    WebElement table = driver.findElement(By.xpath("//div[@class='WorkMeta-details is-collapsed']"));
-                    parseTableDetails(table, book);
-
                     wait.until(d -> driver.findElement(By.xpath("//div[@class='Content']")).isDisplayed());
                     WebElement pageContents = driver.findElement(By.xpath("//div[@class='Content']"));
                     book.genre = parseGenreString(pageContents);
 
+                    //BCOBB: This gets done PER BUTTON now
+                    WebElement titleBlock = driver.findElement(By.xpath("//h1[@class='WorkMeta-title Alternative Alternative-title']"));
+                    if (titleBlock.getText() != null)
+                        book.title = titleBlock.getText();
+
+                    //BCOBB: This function now has to envelop everything.
                     WebElement buttonContainer = driver.findElement(By.xpath("//div[@class='WorkSelector-rowContainer']"));
                     parseButtonContainer(driver, buttonContainer, wait, book);
+
+                    //BCOBB: This gets done PER BUTTON now
+                    WebElement table = driver.findElement(By.xpath("//div[@class='WorkMeta-details is-collapsed']"));
+                    parseTableDetails(table, book);
 
                     SimpleDateFormat formatter = new SimpleDateFormat("MM/yyyy");
 
@@ -308,8 +302,11 @@ public class ThriftBooks_DataScraper
             index++;
             if (detail.getText().toLowerCase().contains("isbn"))
             {
-                book.isbnCode = elements.get(index + 1).getText();
-                continue;
+                if (elements.get(index + 1).getText().length() < 13)
+                {
+                    book.isbnCode = elements.get(index + 1).getText();
+                    continue;
+                }
             }
 
             if (detail.getText().toLowerCase().contains("release"))
@@ -322,8 +319,11 @@ public class ThriftBooks_DataScraper
             {
                 String tempPageLength = elements.get(index + 1).getText();
                 tempPageLength = tempPageLength.replace(" Pages", "");
-                book.pageLength = Integer.parseInt(tempPageLength);
-                continue;
+                if (Integer.parseInt(tempPageLength) < 10)
+                {
+                    book.pageLength = Integer.parseInt(tempPageLength);
+                    continue;
+                }
             }
 
             if (detail.getText().toLowerCase().contains("language"))
@@ -576,7 +576,7 @@ public class ThriftBooks_DataScraper
 
         for (int i = 0; i <= priceLists.size() - 1; i++)
         {
-            if (priceLists.get(i).newPrice <= 0 || priceLists.get(i).newPrice - priceLists.get(i).usedPrice < 2)
+            if (priceLists.get(i).newPrice <= 0)
             {
                 removeIndices[i] = true;
             }
@@ -598,7 +598,7 @@ public class ThriftBooks_DataScraper
             return;
         }
 
-        PriceStructure returnBook = new PriceStructure("null");
+        PriceStructure returnBook = new PriceStructure("Undefined", "Undefined");
         returnBook.newPrice = 1000000000;
         returnBook.usedPrice = 1000000000;
 
@@ -610,9 +610,35 @@ public class ThriftBooks_DataScraper
             }
         }
 
+        if (returnBook.usedPrice == 1000000000)
+        {
+            returnBook.usedPrice = 0;
+            returnBook.newPrice = 0;
+        }
         book.newPrice = returnBook.newPrice;
         book.usedPrice = returnBook.usedPrice;
         book.format = returnBook.format;
+        book.buttonName = returnBook.buttonName;
+    }
+
+
+    static PrimaryFilter getPrimaryFilter(Scanner keyboard)
+    {
+        System.out.println("Enter the number of which way you'd like the pages to be filtered: ");
+
+        for (PrimaryFilter g : PrimaryFilter.values())
+        {
+            System.out.printf("[%d]: %s\n", g.ordinal(), g.getFilterString());
+        }
+        int selection = keyboard.nextInt();
+
+        while (selection < 0 || selection > Genre.values().length)
+        {
+            System.out.println("Invalid selection. Try again. ");
+            selection = keyboard.nextInt();
+        }
+        keyboard.nextLine();
+        return PrimaryFilter.values()[selection];
     }
 
 
