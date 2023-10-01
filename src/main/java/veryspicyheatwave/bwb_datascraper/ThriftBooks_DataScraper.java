@@ -24,7 +24,7 @@ public class ThriftBooks_DataScraper
 {
     //region Class-Wide Variables
     final static String BASE_URL = "https://www.thriftbooks.com";
-    final static String FILTER_URL = "&b.pp=30&b.f.lang%5B%5D=40&b.pt=1&b.f.t%5B%5D=";
+    final static String FILTER_URL = "&b.pp=30&b.f.lang[]=40&b.pt=1&b.f.t[]=";
     final static String GECKO_DRIVER = "geckodriver.exe";
     final static String SAVE_FILE = "dataScrape_" + System.currentTimeMillis() +".csv";
     final static String LOG_FILE = "dataScrape_" + System.currentTimeMillis() +".log";
@@ -100,8 +100,9 @@ public class ThriftBooks_DataScraper
                 Thread.sleep(666);
                 String pageURL = BASE_URL + filterPrimary.getFilterString() + pageNo + FILTER_URL + filterGenre.getFilterNo();
                 driver.get(pageURL);
-                wait.until(d -> driver.findElement(By.xpath("/html/body/div[4]/div/div[2]/div/div[2]/div/div/div/div/div[2]/div[2]/div[1]/div/div[1]")).isDisplayed());
+                Thread.sleep(1500);
 
+                wait.until(d -> driver.findElement(By.xpath("/html/body/div[4]/div/div[2]/div/div[2]/div/div/div/div/div[2]/div[2]/div[1]/div/div[1]")).isDisplayed());
                 WebElement searchContainer = driver.findElement(By.xpath("/html/body/div[4]/div/div[2]/div/div[2]/div/div/div/div/div[2]/div[2]/div[1]/div/div[1]"));
                 List<WebElement> books = searchContainer.findElements(By.tagName("a"));
                 for (WebElement book : books)
@@ -169,18 +170,9 @@ public class ThriftBooks_DataScraper
                     WebElement pageContents = driver.findElement(By.xpath("//div[@class='Content']"));
                     book.genre = parseGenreString(pageContents);
 
-                    //BCOBB: This gets done PER BUTTON now
-                    WebElement titleBlock = driver.findElement(By.xpath("//h1[@class='WorkMeta-title Alternative Alternative-title']"));
-                    if (titleBlock.getText() != null)
-                        book.title = titleBlock.getText();
-
                     //BCOBB: This function now has to envelop everything.
                     WebElement buttonContainer = driver.findElement(By.xpath("//div[@class='WorkSelector-rowContainer']"));
                     parseButtonContainer(driver, buttonContainer, wait, book);
-
-                    //BCOBB: This gets done PER BUTTON now
-                    WebElement table = driver.findElement(By.xpath("//div[@class='WorkMeta-details is-collapsed']"));
-                    parseTableDetails(table, book);
 
                     SimpleDateFormat formatter = new SimpleDateFormat("MM/yyyy");
 
@@ -247,6 +239,16 @@ public class ThriftBooks_DataScraper
         for (WebElement button : buttons)
         {
             wait.until(ExpectedConditions.visibilityOf(button));
+            button.click();
+            Thread.sleep(150);
+
+            WebElement titleBlock = driver.findElement(By.xpath("//h1[@class='WorkMeta-title Alternative Alternative-title']"));
+            if (titleBlock.getText() != null)
+                book.title = titleBlock.getText();
+
+            WebElement table = driver.findElement(By.xpath("//div[@class='WorkMeta-details is-collapsed']"));
+            parseTableDetails(table, book);
+
             List<WebElement> buttDetails = button.findElements(By.xpath("./child::div"));
             for (WebElement buttDetail : buttDetails)
             {
@@ -257,8 +259,6 @@ public class ThriftBooks_DataScraper
                     {
                         getNewAndUsedPrices(book.paperbackPrices, priceRangeElement.getText());
                     }
-                    button.click();
-                    Thread.sleep(150);
                     WebElement image = driver.findElement(By.xpath("//img[@itemprop='image']"));
                     book.paperbackImageLink = image.getAttribute("src");
                     continue;
@@ -628,7 +628,7 @@ public class ThriftBooks_DataScraper
 
         for (PrimaryFilter g : PrimaryFilter.values())
         {
-            System.out.printf("[%d]: %s\n", g.ordinal(), g.getFilterString());
+            System.out.printf("[%d]: %s\n", g.ordinal(), g.getDisplayString());
         }
         int selection = keyboard.nextInt();
 
