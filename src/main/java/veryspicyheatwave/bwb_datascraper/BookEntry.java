@@ -1,5 +1,7 @@
 package veryspicyheatwave.bwb_datascraper;
 
+import java.text.ParseException;
+import java.text.SimpleDateFormat;
 import java.util.Date;
 
 class BookEntry
@@ -24,5 +26,8 @@ class BookEntry
     PriceStructure hardcoverPrices = new PriceStructure("Hardcover", "hardcover");
 
 
-    BookEntry (){}
+    BookEntry () throws ParseException
+    {
+        this.releaseDate = new SimpleDateFormat("MM-yyyy").parse("01-0001");
+    }
 }

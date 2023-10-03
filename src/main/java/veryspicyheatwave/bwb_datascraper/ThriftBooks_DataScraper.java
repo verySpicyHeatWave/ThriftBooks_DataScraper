@@ -3,6 +3,8 @@ package veryspicyheatwave.bwb_datascraper;
 
 import java.io.FileWriter;
 import java.io.IOException;
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.time.LocalDateTime;
@@ -34,7 +36,7 @@ public class ThriftBooks_DataScraper
     //endregion
 
 
-    public static void main(String[] args)
+    public static void main(String[] args) throws IOException, ParseException, InterruptedException
     {
         printBanner();
         Scanner keyboard = new Scanner(System.in);
@@ -84,7 +86,7 @@ public class ThriftBooks_DataScraper
 
 
     //region Primary WebScraper Methods
-    static @NotNull ArrayList<String> getListOfBookURLs(int firstPage, int lastPage)
+    static @NotNull ArrayList<String> getListOfBookURLs(int firstPage, int lastPage) throws IOException
     {
         WebDriver driver = getFFXDriver();
         ArrayList<String> listOfBookURLs = new ArrayList<>();
@@ -96,14 +98,14 @@ public class ThriftBooks_DataScraper
             try
             {
                 long currentPageStartTime = System.nanoTime();
-                driver.navigate().to("about:blank");
+                driver.get("about:blank");
                 Thread.sleep(666);
                 String pageURL = BASE_URL + filterPrimary.getFilterString() + pageNo + FILTER_URL + filterGenre.getFilterNo();
                 driver.get(pageURL);
-                Thread.sleep(1500);
+                Thread.sleep(2000);
 
-                wait.until(d -> driver.findElement(By.xpath("/html/body/div[4]/div/div[2]/div/div[2]/div/div/div/div/div[2]/div[2]/div[1]/div/div[1]")).isDisplayed());
-                WebElement searchContainer = driver.findElement(By.xpath("/html/body/div[4]/div/div[2]/div/div[2]/div/div/div/div/div[2]/div[2]/div[1]/div/div[1]"));
+                WebElement searchContainer = getWebElementByXPath(driver, wait, "/html/body/div[4]/div/div[2]/div/div[2]/div/div/div/div/div[2]/div[2]/div[1]/div/div[1]", "page " + pageNo + " search results");
+
                 List<WebElement> books = searchContainer.findElements(By.tagName("a"));
                 for (WebElement book : books)
                 {
@@ -116,25 +118,14 @@ public class ThriftBooks_DataScraper
                 eventLogEntry(printDurationFromNanoseconds((int) duration) + " spent scraping page " + pageNo);
                 printMemoryUsageToEventLog();
             }
-            catch (org.openqa.selenium.TimeoutException e)
+            catch (RuntimeException | InterruptedException e)
             {
-                eventLogEntry("Error in function getListOfBookURLs(): Selenium timed out when trying to access a book on catalog page " + pageNo);
+                eventLogEntry("Error: Exception while trying to access a book on catalog page " + pageNo);
                 eventLogEntry(e.getMessage());
-            }
-            catch (org.openqa.selenium.StaleElementReferenceException e)
-            {
-                eventLogEntry("Error in function getListOfBookURLs(): Selenium couldn't locate a particular page element for catalog page number " + pageNo);
-                eventLogEntry(e.getMessage());
-            }
-            catch (InterruptedException ex)
-            {
-                eventLogEntry("Error in function getListOfBookURLs(): Sleep function failed while scraping catalog page " + pageNo);
-                eventLogEntry(ex.getMessage());
-            }
-            catch (Exception ex)
-            {
-                eventLogEntry("Error in function getListOfBookURLs(): Unhandled exception while scraping catalog page " + pageNo);
-                eventLogEntry(ex.getMessage());
+                StringWriter sw = new StringWriter();
+                e.printStackTrace(new PrintWriter(sw));
+                eventLogEntry(sw.toString());
+                sw.close();
             }
         }
 
@@ -146,78 +137,97 @@ public class ThriftBooks_DataScraper
 
 
 
-    static void scrapeBookPages(@NotNull ArrayList<String> listOfBookURLs)
+    static void scrapeBookPages(@NotNull ArrayList<String> listOfBookURLs) throws IOException, InterruptedException, ParseException
     {
         WebDriver driver = getFFXDriver();
         eventLogEntry("Created the webdriver object to scrape the book URLs for book data");
         Wait<WebDriver> wait = new WebDriverWait(driver, 4);
-        try
+
+        for (String bookURL : listOfBookURLs)
         {
-            for (String bookURL : listOfBookURLs)
+            long currentBookStartTime = System.nanoTime();
+            BookEntry book = new BookEntry();
+            book.link = bookURL;
+            driver.get(book.link);
+            Thread.sleep(400);
+            try
             {
-                long currentBookStartTime = System.nanoTime();
-                try
-                {
-                    BookEntry book = new BookEntry();
-                    book.link = bookURL;
-                    driver.get(book.link);
-                    Thread.sleep(400);
+                parseTitleAuthor(driver.getTitle(), book);
 
-                    wait.until(d -> driver.findElement(By.xpath("//div[@class='WorkMeta-details is-collapsed']")).isDisplayed());
-                    parseTitleAuthor(driver.getTitle(), book);
+                WebElement pageContents = getWebElementByXPath(driver, wait, "//div[@class='Content']", "entire page contents");
+                book.genre = parseGenreString(pageContents);
 
-                    wait.until(d -> driver.findElement(By.xpath("//div[@class='Content']")).isDisplayed());
-                    WebElement pageContents = driver.findElement(By.xpath("//div[@class='Content']"));
-                    book.genre = parseGenreString(pageContents);
+                WebElement titleBlock = getWebElementByXPath(driver, wait, "//h1[@class='WorkMeta-title Alternative Alternative-title']", "title block");
+                if (titleBlock.getText() != null)
+                    book.title = titleBlock.getText();
 
-                    //BCOBB: This function now has to envelop everything.
-                    WebElement buttonContainer = driver.findElement(By.xpath("//div[@class='WorkSelector-rowContainer']"));
-                    parseButtonContainer(driver, buttonContainer, wait, book);
+                parseButtonContainer(driver, wait, book);
 
-                    SimpleDateFormat formatter = new SimpleDateFormat("MM/yyyy");
+                SimpleDateFormat formatter = new SimpleDateFormat("MM/yyyy");
 
-                    String dataEntry = String.format("\"%s\",\"%s\",%.2f,%.2f,\"%s\",\"%s\",\"%s\",\"%s\",%d,\"%s\",\"%s\",\"%s\",\"%s\"",
-                            book.title, book.author, book.usedPrice, book.newPrice, book.genre, book.format, book.isbnCode, formatter.format(book.releaseDate),
-                            book.pageLength, book.language, book.link, book.paperbackImageLink, book.massImageLink);
+                String dataEntry = String.format("\"%s\",\"%s\",%.2f,%.2f,\"%s\",\"%s\",\"%s\",\"%s\",%d,\"%s\",\"%s\",\"%s\",\"%s\"",
+                        book.title, book.author, book.usedPrice, book.newPrice, book.genre, book.format, book.isbnCode, formatter.format(book.releaseDate),
+                        book.pageLength, book.language, book.link, book.paperbackImageLink, book.massImageLink);
 
-                    writeLineToCSV(dataEntry);
+                writeLineToCSV(dataEntry);
+                eventLogEntry(String.format("Successfully added book number %,d titled \"%s\" to the file", (1 + listOfBookURLs.indexOf(bookURL)), book.title));
+                printMemoryUsageToEventLog();
 
-                    eventLogEntry(String.format("Successfully added book number %,d titled \"%s\" to the file", (1 + listOfBookURLs.indexOf(bookURL)), book.title));
-                    printMemoryUsageToEventLog();
-                }
-                catch (org.openqa.selenium.TimeoutException e)
-                {
-                    eventLogEntry("Error in method scrapeBookPages(): Selenium timed out when trying to access something on the page for book number " + (1 + listOfBookURLs.indexOf(bookURL)) + ": " + bookURL);
-                    eventLogEntry(e.getMessage());
-                }
-                catch (org.openqa.selenium.StaleElementReferenceException e)
-                {
-                    eventLogEntry("Error in method scrapeBookPages(): Selenium couldn't locate a particular page element for book number " + (1 + listOfBookURLs.indexOf(bookURL)) + ": " + bookURL);
-                    eventLogEntry(e.getMessage());
-                }
-                catch (InterruptedException e)
-                {
-                    eventLogEntry("Error in method scrapeBookPages(): Sleep function failed while scraping for book number " + (1 + listOfBookURLs.indexOf(bookURL)) + ": " + bookURL);
-                    eventLogEntry(e.getMessage());
-                }
                 long currentBookEndTime = System.nanoTime();
-
                 long duration = (currentBookEndTime - currentBookStartTime) / 1000000;
                 eventLogEntry(printDurationFromNanoseconds((int) duration) + " spent on scraping book " + (1 + listOfBookURLs.indexOf(bookURL)));
             }
+            catch (InterruptedException | RuntimeException e)
+            {
+                eventLogEntry("Error: Exception while parsing the page for book number " + (1 + listOfBookURLs.indexOf(bookURL)) + ": " + bookURL);
+                eventLogEntry(e.getMessage());
+                StringWriter sw = new StringWriter();
+                e.printStackTrace(new PrintWriter(sw));
+                eventLogEntry(sw.toString());
+                sw.close();
+                long currentBookEndTime = System.nanoTime();
+                long duration = (currentBookEndTime - currentBookStartTime) / 1000000;
+                eventLogEntry(printDurationFromNanoseconds((int) duration) + " spent on scraping book " + (1 + listOfBookURLs.indexOf(bookURL)));
+            }
+
         }
-        catch (Exception ex)
-        {
-            eventLogEntry("Error in method scrapeBookPages(): Unhandled error while scraping web pages. Killing the operation...");
-            eventLogEntry(ex.getMessage());
-        }
-        finally
-        {
-            driver.quit();
-            eventLogEntry("WebDriver instance successfully closed");
-        }
+
+        driver.quit();
+        eventLogEntry("WebDriver instance successfully closed");
     }
-    //endregion
+
+
+    static WebElement getWebElementByXPath(WebDriver driver, Wait<WebDriver> wait, String xpathExpression, String elementDescription) throws InterruptedException, RuntimeException
+    {
+        int retryTimer = 0;
+        int tryCount;
+        WebElement resp = null;
+        for (tryCount = 1; tryCount <= 4; tryCount++)
+        {
+            try
+            {
+                wait.until(d -> driver.findElement(By.xpath(xpathExpression)).isDisplayed());
+                resp = driver.findElement(By.xpath(xpathExpression));
+            }
+            catch (org.openqa.selenium.TimeoutException | org.openqa.selenium.StaleElementReferenceException | NullPointerException e)
+            {
+                eventLogEntry("Error: Exception while trying to get the WebElement: " + elementDescription);
+                eventLogEntry(e.getMessage());
+                if (tryCount == 4)
+                {
+                    eventLogEntry("Error: Failed to get the WebElement: " + elementDescription);
+                    throw new RuntimeException("Error: Exception while trying to get the WebElement: " + elementDescription, e);
+                }
+                else
+                {
+                    retryTimer += (tryCount * 1000);
+                    Thread.sleep(retryTimer);
+                    eventLogEntry("Attempting try number " + (1 + tryCount) + " after a " + (retryTimer / 1000) + " second wait");
+                }
+            }
+        }
+        return resp;
+    }//endregion
 
 
     //region WebElement Parsers
@@ -233,21 +243,17 @@ public class ThriftBooks_DataScraper
     }
 
 
-    static void parseButtonContainer(@NotNull WebDriver driver, @NotNull WebElement buttonContainer, Wait<WebDriver> wait, BookEntry book) throws InterruptedException, StaleElementReferenceException, TimeoutException
+    static void parseButtonContainer(@NotNull WebDriver driver, Wait<WebDriver> wait, BookEntry book) throws InterruptedException, StaleElementReferenceException, TimeoutException
     {
+        WebElement buttonContainer = getWebElementByXPath(driver, wait, "//div[@class='WorkSelector-row WorkSelector-td-height']", "button container");
+        //<div class="WorkSelector-row WorkSelector-td-height"><button class="NewButton WorkSelector-button is-selected" title="" type="button" aria-selected="true" aria-current="false"><div class="WorkSelector-bold">Hardcover</div><div class=""><span>$4.09 - $22.63</span></div><div class="tb-hiddenText">Hardcover $4.09 - $22.63</div></button><button class="NewButton WorkSelector-button" title="" type="button" aria-selected="false" aria-current="false"><div class="WorkSelector-bold">Paperback</div><div class=""><span>$4.29 - $14.48</span></div><div class="tb-hiddenText">Paperback $4.29 - $14.48</div></button><button class="NewButton WorkSelector-button" title="" type="button" aria-selected="false" aria-current="false"><div class="WorkSelector-bold">Mass Market Paperback</div><div class=""><span>$3.99 - $4.19</span></div><div class="tb-hiddenText">Mass Market Paperback $3.99 - $4.19</div></button><button class="NewButton WorkSelector-button" title="" type="button" aria-selected="false" aria-current="false"><div class="WorkSelector-bold">Tankobon Softcover</div><div class=""><span>--</span></div><div class="tb-hiddenText">Tankobon Softcover --</div></button></div>
+
         List<WebElement> buttons = buttonContainer.findElements(By.tagName("button"));
         for (WebElement button : buttons)
         {
             wait.until(ExpectedConditions.visibilityOf(button));
             button.click();
             Thread.sleep(150);
-
-            WebElement titleBlock = driver.findElement(By.xpath("//h1[@class='WorkMeta-title Alternative Alternative-title']"));
-            if (titleBlock.getText() != null)
-                book.title = titleBlock.getText();
-
-            WebElement table = driver.findElement(By.xpath("//div[@class='WorkMeta-details is-collapsed']"));
-            parseTableDetails(table, book);
 
             List<WebElement> buttDetails = button.findElements(By.xpath("./child::div"));
             for (WebElement buttDetail : buttDetails)
@@ -259,8 +265,12 @@ public class ThriftBooks_DataScraper
                     {
                         getNewAndUsedPrices(book.paperbackPrices, priceRangeElement.getText());
                     }
-                    WebElement image = driver.findElement(By.xpath("//img[@itemprop='image']"));
+
+                    WebElement image = getWebElementByXPath(driver, wait, "//img[@itemprop='image']", "paperback image link");
                     book.paperbackImageLink = image.getAttribute("src");
+
+                    WebElement table = getWebElementByXPath(driver, wait, "//div[@class='WorkMeta-details is-collapsed']", "book data table");
+                    parseTableDetails(table, book);
                     continue;
                 }
 
@@ -268,7 +278,7 @@ public class ThriftBooks_DataScraper
                 {
                     button.click();
                     Thread.sleep(150);
-                    WebElement image = driver.findElement(By.xpath("//img[@itemprop='image']"));
+                    WebElement image = getWebElementByXPath(driver, wait, "//img[@itemprop='image']", "mass market paperback image link");
                     book.massImageLink = image.getAttribute("src");
                     if (book.usedPrice <= 0 || book.newPrice <= 0)
                     {
@@ -319,7 +329,7 @@ public class ThriftBooks_DataScraper
             {
                 String tempPageLength = elements.get(index + 1).getText();
                 tempPageLength = tempPageLength.replace(" Pages", "");
-                if (Integer.parseInt(tempPageLength) < 10)
+                if (Integer.parseInt(tempPageLength) > 10)
                 {
                     book.pageLength = Integer.parseInt(tempPageLength);
                     continue;
