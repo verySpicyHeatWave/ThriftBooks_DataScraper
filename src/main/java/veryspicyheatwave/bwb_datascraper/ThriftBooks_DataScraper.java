@@ -1,15 +1,14 @@
 //region Import Statements
 package veryspicyheatwave.bwb_datascraper;
 
-import java.io.FileWriter;
-import java.io.IOException;
-import java.io.PrintWriter;
-import java.io.StringWriter;
+import java.io.*;
+import java.sql.*;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
+import java.util.Date;
 
 import org.jetbrains.annotations.NotNull;
 
@@ -30,20 +29,17 @@ public class ThriftBooks_DataScraper
     final static String GECKO_DRIVER = "geckodriver.exe";
     final static String SAVE_FILE = "dataScrape_" + System.currentTimeMillis() +".csv";
     final static String LOG_FILE = "dataScrape_" + System.currentTimeMillis() +".log";
+    final static String FAIL_FILE = "dataScrapeFAILS_" + System.currentTimeMillis() +".csv";
     static boolean loggingEvents = false;
     static Genre filterGenre;
     static PrimaryFilter filterPrimary;
     //endregion
 
 
-    public static void main(String[] args) throws IOException, ParseException, InterruptedException
+    public static void main(String[] args) throws IOException, ParseException, InterruptedException, SQLException, ClassNotFoundException
     {
         printBanner();
         Scanner keyboard = new Scanner(System.in);
-
-        loggingEvents = askIfUserWantsToLog(keyboard);
-        if (loggingEvents)
-            eventLogEntry("Log file generated");
 
         int firstPage;
         int lastPage;
@@ -64,20 +60,25 @@ public class ThriftBooks_DataScraper
 
         filterPrimary = getPrimaryFilter(keyboard);
         filterGenre = getBookGenre(keyboard);
-        //System.out.println(filterGenre);
 
         eventLogEntry("User selected catalog pages " + firstPage + " to " + lastPage + " filtering by the " + filterPrimary.getDisplayString() + " " + filterGenre.getDisplayString() + " books");
 
+        loggingEvents = askIfUserWantsToLog(keyboard);
+        if (loggingEvents)
+            eventLogEntry("Log file generated");
 
         writeLineToCSV("Title, Author, Used Price, New Price, Genre, Format, ISBN Code, Release Date," +
                         "Page Length, Language, ThriftBooks URL, Image Link 1, Image Link 2");
 
         eventLogEntry("CSV file generated");
+        keyboard.close();
 
         long startTime = System.nanoTime();
         printMemoryUsageToEventLog();
 
         scrapeBookPages(getListOfBookURLs(firstPage, lastPage));
+
+        putCSVDataIntoSQLdb();
 
         long endTime = System.nanoTime();
         long duration = (endTime - startTime) / 1000000;
@@ -142,6 +143,7 @@ public class ThriftBooks_DataScraper
         WebDriver driver = getFFXDriver();
         eventLogEntry("Created the webdriver object to scrape the book URLs for book data");
         Wait<WebDriver> wait = new WebDriverWait(driver, 4);
+        int bookSuccesses = 0, bookFailures = 0;
 
         for (String bookURL : listOfBookURLs)
         {
@@ -163,10 +165,11 @@ public class ThriftBooks_DataScraper
 
                 parseButtonContainer(driver, wait, book);
 
-                SimpleDateFormat formatter = new SimpleDateFormat("MM/yyyy");
+                SimpleDateFormat formatter = new SimpleDateFormat("yyyy-MM-dd");
 
-                String dataEntry = String.format("\"%s\",\"%s\",%.2f,%.2f,\"%s\",\"%s\",\"%s\",\"%s\",%d,\"%s\",\"%s\",\"%s\",\"%s\"",
-                        book.title, book.author, book.usedPrice, book.newPrice, book.genre, book.format, book.isbnCode, formatter.format(book.releaseDate),
+                String dataEntry = String.format("'%s','%s',%.2f,%.2f,'%s','%s','%s','%s',%d,'%s','%s','%s','%s'",
+                        book.title.replace("'", "\\'"), book.author, book.usedPrice, book.newPrice, book.genre.replace("'", "\\'"),
+                        book.format, book.isbnCode, formatter.format(book.releaseDate),
                         book.pageLength, book.language, book.link, book.paperbackImageLink, book.massImageLink);
 
                 writeLineToCSV(dataEntry);
@@ -176,6 +179,7 @@ public class ThriftBooks_DataScraper
                 long currentBookEndTime = System.nanoTime();
                 long duration = (currentBookEndTime - currentBookStartTime) / 1000000;
                 eventLogEntry(printDurationFromNanoseconds((int) duration) + " spent on scraping book " + (1 + listOfBookURLs.indexOf(bookURL)));
+                bookSuccesses++;
             }
             catch (InterruptedException | RuntimeException e)
             {
@@ -188,12 +192,13 @@ public class ThriftBooks_DataScraper
                 long currentBookEndTime = System.nanoTime();
                 long duration = (currentBookEndTime - currentBookStartTime) / 1000000;
                 eventLogEntry(printDurationFromNanoseconds((int) duration) + " spent on scraping book " + (1 + listOfBookURLs.indexOf(bookURL)));
+                bookFailures++;
             }
-
         }
 
         driver.quit();
         eventLogEntry("WebDriver instance successfully closed");
+        eventLogEntry("Web scraping complete. " + bookSuccesses + " books successfully added. " + bookFailures + " books failed.");
     }
 
 
@@ -412,6 +417,19 @@ public class ThriftBooks_DataScraper
     }
 
 
+    static void writeFailuresToCSV(String dataEntry)
+    {
+        try (FileWriter writer = new FileWriter(FAIL_FILE, true))
+        {
+            writer.write(dataEntry + "\n");
+        }
+        catch (IOException ex)
+        {
+            System.out.println("ERROR: Failed to write to CSV file. Oops!");
+        }
+    }
+
+
     static void writeLineToCSV(String dataEntry)
     {
         try (FileWriter writer = new FileWriter(SAVE_FILE, true))
@@ -442,6 +460,74 @@ public class ThriftBooks_DataScraper
             }
         }
     }
+
+    static void putCSVDataIntoSQLdb() throws FileNotFoundException, ClassNotFoundException, SQLException
+    {
+        File csvFile = new File(SAVE_FILE);
+        Scanner csvFileScan = new Scanner(csvFile);
+
+        eventLogEntry("Connecting to SQL database");
+        Class.forName("com.mysql.cj.jdbc.Driver");
+
+        int bookNo = 0, bookSuccesses = 0, bookFailures = 0;
+        writeFailuresToCSV("Title, Author, Used Price, New Price, Genre, Format, ISBN Code, Release Date," +
+                "Page Length, Language, ThriftBooks URL, Image Link 1, Image Link 2");
+        String pwSQL = getSQLPassword();
+
+        while (csvFileScan.hasNext())
+        {
+            String csvStr = csvFileScan.nextLine();
+            if (csvStr.contains("Release Date,Page Length"))
+                continue;
+
+            bookNo++;
+
+            Connection con = null;
+            try
+            {
+                Thread.sleep(200);
+                String insertionQuery = "INSERT INTO books(title,author,used_price,new_price,genre,binding_type,isbn_code,release_date,page_length,language,bookURL,bookImageURL1,bookImageURL2) VALUES";
+                insertionQuery += "(" + csvStr + ");";
+
+                con = DriverManager.getConnection(
+                        "jdbc:mysql://localhost:3306/thriftBooksDB", "root", pwSQL);
+                Statement statement = con.createStatement();
+                statement.execute(insertionQuery);
+                eventLogEntry("Book " + bookNo + ": Successfully added to SQL table");
+                bookSuccesses++;
+            } catch (SQLException | InterruptedException sqlE)
+            {
+                eventLogEntry("Book " + bookNo + ": " + sqlE.getMessage());
+                writeFailuresToCSV(csvStr);
+                bookFailures++;
+            } finally
+            {
+                assert con != null;
+                con.close();
+            }
+        }
+        csvFileScan.close();
+        if (csvFile.delete())
+        {
+            eventLogEntry("Deleted the CSV storage file");
+        }
+        else
+        {
+            eventLogEntry("Failed to delete the CSV storage file");
+        }
+        eventLogEntry("SQL Insertions complete. " + bookSuccesses + " books successfully added. " + bookFailures + " executions failed.");
+    }
+
+
+    static String getSQLPassword() throws FileNotFoundException
+    {
+        File pwFile = new File("pw.txt");
+        Scanner pwFileScan = new Scanner(pwFile);
+        String resp = pwFileScan.nextLine();
+        pwFileScan.close();
+        return resp;
+    }
+
 
 
     static @NotNull String printDurationFromNanoseconds(int duration)
