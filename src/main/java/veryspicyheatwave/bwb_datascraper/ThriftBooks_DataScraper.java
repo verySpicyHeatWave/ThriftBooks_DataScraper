@@ -2,6 +2,10 @@
 package veryspicyheatwave.bwb_datascraper;
 
 import java.io.*;
+import java.net.URL;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.sql.*;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
@@ -9,6 +13,7 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.Date;
+import java.util.List;
 
 import org.jetbrains.annotations.NotNull;
 
@@ -187,6 +192,9 @@ public class ThriftBooks_DataScraper
 
                 parseButtonContainer(driver, wait, book);
 
+                downloadImageFromURL(book.paperbackImageLink,book.title,"1");
+                downloadImageFromURL(book.massImageLink,book.title,"2");
+
                 SimpleDateFormat formatter = new SimpleDateFormat("yyyy-MM-dd");
 
                 String dataEntry = String.format("'%s','%s',%.2f,%.2f,'%s','%s','%s','%s',%d,'%s','%s','%s','%s'",
@@ -195,9 +203,12 @@ public class ThriftBooks_DataScraper
                         book.pageLength, book.language, book.link, book.paperbackImageLink, book.massImageLink);
 
                 writeLineToCSV(dataEntry);
-                insertBookIntoSQLdb(dataEntry, 1 + listOfBookURLs.indexOf(bookURL));
-                eventLogEntry(String.format("Successfully added book number %,d titled \"%s\" to the file", (1 + listOfBookURLs.indexOf(bookURL)), book.title));
+                if (!insertBookIntoSQLdb(dataEntry, 1 + listOfBookURLs.indexOf(bookURL)))
+                {
+                    writeFailuresToCSV(bookURL);
+                }
 
+                eventLogEntry(String.format("Successfully added book number %,d titled \"%s\" to the CSV file", (1 + listOfBookURLs.indexOf(bookURL)), book.title));
                 bookSuccesses++;
             }
             catch (InterruptedException | RuntimeException | SQLException | ClassNotFoundException e)
@@ -492,10 +503,11 @@ public class ThriftBooks_DataScraper
     }
 
 
-    static void insertBookIntoSQLdb(String csvStr, int bookNo) throws FileNotFoundException, ClassNotFoundException, SQLException
+    static boolean insertBookIntoSQLdb(String csvStr, int bookNo) throws FileNotFoundException, ClassNotFoundException, SQLException
     {
         Class.forName("com.mysql.cj.jdbc.Driver");
         String pwSQL = getSQLPassword();
+        boolean resp = false;
 
         Connection con = null;
         try
@@ -508,13 +520,48 @@ public class ThriftBooks_DataScraper
             Statement statement = con.createStatement();
             statement.execute(insertionQuery);
             eventLogEntry("Book " + bookNo + ": Successfully added to SQL table");
+            resp = true;
         } catch (SQLException sqlE)
         {
             eventLogEntry("Book " + bookNo + ": " + sqlE.getMessage());
+            if (sqlE.getMessage().contains("Duplicate entry"))
+                resp = true;
         } finally
         {
             assert con != null;
             con.close();
+        }
+        return resp;
+    }
+
+
+    static void downloadImageFromURL(String imageURL, String bookTitle, String imageNumber)
+    {
+        if (imageURL.equalsIgnoreCase("null"))
+        {
+            eventLogEntry("No image URL exists");
+            return;
+        }
+
+        Path fileOutputPath = Paths.get("images/" + bookTitle);
+        File fileOutputStr =  new File(fileOutputPath + "/" + imageNumber + ".jpg");
+        if (!Files.exists(fileOutputPath))
+            new File(String.valueOf(fileOutputPath)).mkdirs();
+
+        try (BufferedInputStream in = new BufferedInputStream(new URL(imageURL).openStream());
+                FileOutputStream fileOutputStream = new FileOutputStream(fileOutputStr))
+        {
+            byte[] dataBuffer = new byte[1024];
+            int bytesRead;
+            while ((bytesRead = in.read(dataBuffer, 0, 1024)) != -1)
+            {
+                fileOutputStream.write(dataBuffer, 0, bytesRead);
+            }
+            eventLogEntry("Created new image file: " + fileOutputStr);
+        }
+        catch (IOException e)
+        {
+            eventLogEntry("Error while creating image file: " + e.getMessage());
         }
     }
 
@@ -529,6 +576,10 @@ public class ThriftBooks_DataScraper
             failURLs.add(failFileScan.nextLine());
         }
         failFileScan.close();
+        if (failFile.delete())
+        {
+            eventLogEntry("Deleted first fail log");
+        }
         return failURLs;
     }
 
