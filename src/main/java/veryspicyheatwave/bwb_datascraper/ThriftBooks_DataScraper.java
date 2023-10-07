@@ -29,14 +29,14 @@ public class ThriftBooks_DataScraper
     final static String GECKO_DRIVER = "geckodriver.exe";
     final static String SAVE_FILE = "dataScrape_" + System.currentTimeMillis() +".csv";
     final static String LOG_FILE = "dataScrape_" + System.currentTimeMillis() +".log";
-    final static String FAIL_FILE = "dataScrapeFAILS_" + System.currentTimeMillis() +".csv";
+    final static String FAIL_FILE = "dataScrape_" + System.currentTimeMillis() +"_FAILS.csv";
     static boolean loggingEvents = false;
     static Genre filterGenre;
     static PrimaryFilter filterPrimary;
     //endregion
 
 
-    public static void main(String[] args) throws IOException, ParseException, InterruptedException, SQLException, ClassNotFoundException
+    public static void main(String[] args) throws IOException, ParseException, InterruptedException
     {
         printBanner();
         Scanner keyboard = new Scanner(System.in);
@@ -74,11 +74,11 @@ public class ThriftBooks_DataScraper
         keyboard.close();
 
         long startTime = System.nanoTime();
-        printMemoryUsageToEventLog();
+//        printMemoryUsageToEventLog();
 
         scrapeBookPages(getListOfBookURLs(firstPage, lastPage));
 
-        putCSVDataIntoSQLdb();
+        //putCSVDataIntoSQLdb();
 
         long endTime = System.nanoTime();
         long duration = (endTime - startTime) / 1000000;
@@ -117,7 +117,7 @@ public class ThriftBooks_DataScraper
                 long currentPageEndTime = System.nanoTime();
                 long duration = (currentPageEndTime - currentPageStartTime) / 1000000;
                 eventLogEntry(printDurationFromNanoseconds((int) duration) + " spent scraping page " + pageNo);
-                printMemoryUsageToEventLog();
+//                printMemoryUsageToEventLog();
             }
             catch (RuntimeException | InterruptedException e)
             {
@@ -131,6 +131,7 @@ public class ThriftBooks_DataScraper
         }
 
         eventLogEntry("Successfully retrieved " + listOfBookURLs.size() + " book links from " + (lastPage - firstPage + 1) + " pages");
+        driver.close();
         driver.quit();
         eventLogEntry("WebDriver instance successfully closed");
         return listOfBookURLs;
@@ -150,10 +151,10 @@ public class ThriftBooks_DataScraper
             long currentBookStartTime = System.nanoTime();
             BookEntry book = new BookEntry();
             book.link = bookURL;
-            driver.get(book.link);
-            Thread.sleep(400);
             try
             {
+                driver.get(book.link);
+                Thread.sleep(400);
                 parseTitleAuthor(driver.getTitle(), book);
 
                 WebElement pageContents = getWebElementByXPath(driver, wait, "//div[@class='Content']", "entire page contents");
@@ -173,15 +174,13 @@ public class ThriftBooks_DataScraper
                         book.pageLength, book.language, book.link, book.paperbackImageLink, book.massImageLink);
 
                 writeLineToCSV(dataEntry);
+                insertBookIntoSQLdb(dataEntry, 1 + listOfBookURLs.indexOf(bookURL));
                 eventLogEntry(String.format("Successfully added book number %,d titled \"%s\" to the file", (1 + listOfBookURLs.indexOf(bookURL)), book.title));
-                printMemoryUsageToEventLog();
+//                printMemoryUsageToEventLog();
 
-                long currentBookEndTime = System.nanoTime();
-                long duration = (currentBookEndTime - currentBookStartTime) / 1000000;
-                eventLogEntry(printDurationFromNanoseconds((int) duration) + " spent on scraping book " + (1 + listOfBookURLs.indexOf(bookURL)));
                 bookSuccesses++;
             }
-            catch (InterruptedException | RuntimeException e)
+            catch (InterruptedException | RuntimeException | SQLException | ClassNotFoundException e)
             {
                 eventLogEntry("Error: Exception while parsing the page for book number " + (1 + listOfBookURLs.indexOf(bookURL)) + ": " + bookURL);
                 eventLogEntry(e.getMessage());
@@ -189,13 +188,18 @@ public class ThriftBooks_DataScraper
                 e.printStackTrace(new PrintWriter(sw));
                 eventLogEntry(sw.toString());
                 sw.close();
+                writeFailuresToCSV(bookURL);
+                bookFailures++;
+            }
+            finally
+            {
                 long currentBookEndTime = System.nanoTime();
                 long duration = (currentBookEndTime - currentBookStartTime) / 1000000;
                 eventLogEntry(printDurationFromNanoseconds((int) duration) + " spent on scraping book " + (1 + listOfBookURLs.indexOf(bookURL)));
-                bookFailures++;
             }
         }
 
+        driver.close();
         driver.quit();
         eventLogEntry("WebDriver instance successfully closed");
         eventLogEntry("Web scraping complete. " + bookSuccesses + " books successfully added. " + bookFailures + " books failed.");
@@ -461,6 +465,36 @@ public class ThriftBooks_DataScraper
         }
     }
 
+
+    static void insertBookIntoSQLdb(String csvStr, int bookNo) throws FileNotFoundException, ClassNotFoundException, SQLException
+    {
+        Class.forName("com.mysql.cj.jdbc.Driver");
+        String pwSQL = getSQLPassword();
+
+        Connection con = null;
+        try
+        {
+            Thread.sleep(200);
+            String insertionQuery = "INSERT INTO books(title,author,used_price,new_price,genre,binding_type,isbn_code,release_date,page_length,language,bookURL,bookImageURL1,bookImageURL2) VALUES";
+            insertionQuery += "(" + csvStr + ");";
+
+            con = DriverManager.getConnection(
+                    "jdbc:mysql://localhost:3306/thriftBooksDB", "root", pwSQL);
+            Statement statement = con.createStatement();
+            statement.execute(insertionQuery);
+            eventLogEntry("Book " + bookNo + ": Successfully added to SQL table");
+        } catch (SQLException | InterruptedException sqlE)
+        {
+            eventLogEntry("Book " + bookNo + ": " + sqlE.getMessage());
+        } finally
+        {
+            assert con != null;
+            con.close();
+        }
+    }
+
+
+
     static void putCSVDataIntoSQLdb() throws FileNotFoundException, ClassNotFoundException, SQLException
     {
         File csvFile = new File(SAVE_FILE);
@@ -470,8 +504,6 @@ public class ThriftBooks_DataScraper
         Class.forName("com.mysql.cj.jdbc.Driver");
 
         int bookNo = 0, bookSuccesses = 0, bookFailures = 0;
-        writeFailuresToCSV("Title, Author, Used Price, New Price, Genre, Format, ISBN Code, Release Date," +
-                "Page Length, Language, ThriftBooks URL, Image Link 1, Image Link 2");
         String pwSQL = getSQLPassword();
 
         while (csvFileScan.hasNext())
@@ -497,6 +529,9 @@ public class ThriftBooks_DataScraper
                 bookSuccesses++;
             } catch (SQLException | InterruptedException sqlE)
             {
+                if (bookFailures == 0)
+                    writeFailuresToCSV("Title, Author, Used Price, New Price, Genre, Format, ISBN Code, Release Date," +
+                            "Page Length, Language, ThriftBooks URL, Image Link 1, Image Link 2");
                 eventLogEntry("Book " + bookNo + ": " + sqlE.getMessage());
                 writeFailuresToCSV(csvStr);
                 bookFailures++;
@@ -576,10 +611,10 @@ public class ThriftBooks_DataScraper
     }
 
 
-    static void printMemoryUsageToEventLog()
-    {
-        eventLogEntry(String.format("Memory usage: %d kb / %d kb", (Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()) / 1024, Runtime.getRuntime().totalMemory() / 1024));
-    }
+//    static void printMemoryUsageToEventLog()
+//    {
+//        eventLogEntry(String.format("Memory usage: %d kb / %d kb", (Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()) / 1024, Runtime.getRuntime().totalMemory() / 1024));
+//    }
     //endregion
 
 
