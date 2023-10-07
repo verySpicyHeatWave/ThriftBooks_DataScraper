@@ -107,15 +107,20 @@ public class ThriftBooks_DataScraper
                 long currentPageStartTime = System.nanoTime();
                 String pageURL = BASE_URL + filterPrimary.getFilterString() + pageNo + FILTER_URL + filterGenre.getFilterNo();
 
-                loadWebPage(driver, "about:blank","blank page");
+                performWebAction(() -> driver.get("about:blank"), "load a blank page");
                 Thread.sleep(666);
 
-                loadWebPage(driver, pageURL,"blank page");
+                performWebAction(() -> driver.get(pageURL), "load the URL for catalog page " + pageNo);
                 Thread.sleep(2000);
 
-                WebElement searchContainer = getWebElementByXPath(driver, wait, "/html/body/div[4]/div/div[2]/div/div[2]/div/div/div/div/div[2]/div[2]/div[1]/div/div[1]", "page " + pageNo + " search results");
+                WebElement searchContainer = getWebElement(() -> {
+                    String xpathExpression = "/html/body/div[4]/div/div[2]/div/div[2]/div/div/div/div/div[2]/div[2]/div[1]/div/div[1]";
+                    wait.until(d -> driver.findElement(By.xpath(xpathExpression)).isDisplayed());
+                    return driver.findElement(By.xpath(xpathExpression));
+                }, "page " + pageNo + " search results");
 
-                List<WebElement> books = getListOfWebElementsByTagName(searchContainer,"a","list of books");
+                List<WebElement> books = getListOfWebElements(() -> searchContainer.findElements(By.tagName("a")), "list of books");
+
                 for (WebElement book : books)
                 {
                     String bookURL = book.getAttribute("href");
@@ -161,15 +166,22 @@ public class ThriftBooks_DataScraper
             book.link = bookURL;
             try
             {
-                loadWebPage(driver, bookURL,"book number " + listOfBookURLs.indexOf(bookURL));
-                driver.get(bookURL);
+                performWebAction(() -> driver.get(bookURL), "load book number " + listOfBookURLs.indexOf(bookURL) + " book URL");
                 Thread.sleep(400);
                 parseTitleAuthor(driver.getTitle(), book);
 
-                WebElement pageContents = getWebElementByXPath(driver, wait, "//div[@class='Content']", "entire page contents");
+                WebElement pageContents = getWebElement(() -> {
+                    String xpathExpression = "//div[@class='Content']";
+                    wait.until(d -> driver.findElement(By.xpath(xpathExpression)).isDisplayed());
+                    return driver.findElement(By.xpath(xpathExpression));
+                }, "book page contents");
                 book.genre = parseGenreString(pageContents);
 
-                WebElement titleBlock = getWebElementByXPath(driver, wait, "//h1[@class='WorkMeta-title Alternative Alternative-title']", "title block");
+                WebElement titleBlock = getWebElement(() -> {
+                    String xpathExpression = "//h1[@class='WorkMeta-title Alternative Alternative-title']";
+                    wait.until(d -> driver.findElement(By.xpath(xpathExpression)).isDisplayed());
+                    return driver.findElement(By.xpath(xpathExpression));
+                }, "title block");
                 if (titleBlock.getText() != null)
                     book.title = titleBlock.getText();
 
@@ -210,7 +222,7 @@ public class ThriftBooks_DataScraper
         driver.quit();
         eventLogEntry("WebDriver instance successfully closed");
         eventLogEntry("Web scraping complete: " + bookSuccesses + " books successfully added");
-        eventLogEntry(bookFailures + " books failed to successfully parse");
+        eventLogEntry(bookFailures + " books could not be processed");
     }
     //endregion
 
@@ -230,39 +242,77 @@ public class ThriftBooks_DataScraper
 
     static void parseButtonContainer(@NotNull WebDriver driver, Wait<WebDriver> wait, BookEntry book) throws InterruptedException, StaleElementReferenceException, TimeoutException
     {
-        WebElement buttonContainer = getWebElementByXPath(driver, wait, "//div[@class='WorkSelector-row WorkSelector-td-height']", "button container");
+        WebElement buttonContainer = getWebElement(() -> {
+            String xpathExpression = "//div[@class='WorkSelector-row WorkSelector-td-height']";
+            wait.until(d -> driver.findElement(By.xpath(xpathExpression)).isDisplayed());
+            return driver.findElement(By.xpath(xpathExpression));
+        }, "button container");
 
-        List<WebElement> buttons = getListOfWebElementsByTagName(buttonContainer,"button","list of buttons");
+        List<WebElement> buttons = getListOfWebElements(() -> buttonContainer.findElements(By.tagName("button")), "list of buttons");
+
         for (WebElement button : buttons)
         {
-            List<WebElement> buttDetails = getListOfWebElementsByXPath(button,"./child::div","button details");
+            List<WebElement> buttDetails = getListOfWebElements(() -> button.findElements(By.xpath("./child::div")), "button details");
             for (WebElement buttDetail : buttDetails)
             {
                 if (buttDetail.getText().equalsIgnoreCase("paperback"))
                 {
-                    clickButton(button, "paperback button");
-                    WebElement priceRangeElement = getWebElementByXPath(buttDetail,wait,"./following-sibling::div[@class='']//span","price range");
+                    performWebAction(() -> {
+                        JavascriptExecutor js = (JavascriptExecutor)driver;
+                        js.executeScript("arguments[0].click();", button);
+                    }, "click a paperback button");
+
+                    WebElement priceRangeElement = getWebElement(() -> {
+                        String xpathExpression = "./following-sibling::div[@class='']//span";
+                        wait.until(d -> buttDetail.findElement(By.xpath(xpathExpression)).isDisplayed());
+                        return buttDetail.findElement(By.xpath(xpathExpression));
+                    }, "price range");
+
                     if (priceRangeElement.getText().contains("$"))
                     {
                         getNewAndUsedPrices(book.paperbackPrices, priceRangeElement.getText());
                     }
 
-                    WebElement image = getWebElementByXPath(driver, wait, "//img[@itemprop='image']", "paperback image link");
+                    WebElement image = getWebElement(() -> {
+                        String xpathExpression = "//img[@itemprop='image']";
+                        wait.until(d -> driver.findElement(By.xpath(xpathExpression)).isDisplayed());
+                        return driver.findElement(By.xpath(xpathExpression));
+                    }, "paperback image link");
+
                     book.paperbackImageLink = image.getAttribute("src");
 
-                    WebElement table = getWebElementByXPath(driver, wait, "//div[@class='WorkMeta-details is-collapsed']", "book data table");
+                   WebElement table = getWebElement(() -> {
+                        String xpathExpression = "//div[@class='WorkMeta-details is-collapsed']";
+                        wait.until(d -> driver.findElement(By.xpath(xpathExpression)).isDisplayed());
+                        return driver.findElement(By.xpath(xpathExpression));
+                    }, "book data table");
+
                     parseTableDetails(table, book);
                     continue;
                 }
 
                 if (buttDetail.getText().equalsIgnoreCase("mass market paperback"))
                 {
-                    clickButton(button, "hardcover button");
-                    WebElement image = getWebElementByXPath(driver, wait, "//img[@itemprop='image']", "mass market paperback image link");
+                    performWebAction(() -> {
+                        JavascriptExecutor js = (JavascriptExecutor)driver;
+                        js.executeScript("arguments[0].click();", button);
+                    }, "click a hardcover button");
+
+                    WebElement image = getWebElement(() -> {
+                        String xpathExpression = "//img[@itemprop='image']";
+                        wait.until(d -> driver.findElement(By.xpath(xpathExpression)).isDisplayed());
+                        return driver.findElement(By.xpath(xpathExpression));
+                    }, "mass market paperback image link");
+
                     book.massImageLink = image.getAttribute("src");
                     if (book.usedPrice <= 0 || book.newPrice <= 0)
                     {
-                        WebElement priceRangeElement = getWebElementByXPath(buttDetail,wait,"./following-sibling::div[@class='']//span","price range");
+                        WebElement priceRangeElement = getWebElement(() -> {
+                            String xpathExpression = "./following-sibling::div[@class='']//span";
+                            wait.until(d -> buttDetail.findElement(By.xpath(xpathExpression)).isDisplayed());
+                            return buttDetail.findElement(By.xpath(xpathExpression));
+                        }, "price range");
+
                         getNewAndUsedPrices(book.massMarketPrices, priceRangeElement.getText());
                     }
                     continue;
@@ -270,7 +320,11 @@ public class ThriftBooks_DataScraper
 
                 if (buttDetail.getText().equalsIgnoreCase("hardcover"))
                 {
-                    WebElement priceRangeElement = getWebElementByXPath(buttDetail,wait,"./following-sibling::div[@class='']//span","price range");
+                    WebElement priceRangeElement = getWebElement(() -> {
+                        String xpathExpression = "./following-sibling::div[@class='']//span";
+                        wait.until(d -> buttDetail.findElement(By.xpath(xpathExpression)).isDisplayed());
+                        return buttDetail.findElement(By.xpath(xpathExpression));
+                    }, "price range");
                     if (priceRangeElement.getText().contains("$"))
                     {
                         getNewAndUsedPrices(book.hardcoverPrices, priceRangeElement.getText());
@@ -284,7 +338,7 @@ public class ThriftBooks_DataScraper
 
     static void parseTableDetails(@NotNull WebElement table, BookEntry book) throws StaleElementReferenceException, TimeoutException, InterruptedException
     {
-        List<WebElement> elements = getListOfWebElementsByTagName(table,"span","table details");
+        List<WebElement> elements = getListOfWebElements(() -> table.findElements(By.tagName("span")), "table details");
         int index = -1;
 
         for (WebElement detail : elements)
@@ -332,7 +386,8 @@ public class ThriftBooks_DataScraper
 
     static String parseGenreString(@NotNull WebElement pageContents) throws InterruptedException
     {
-        List<WebElement> spans = getListOfWebElementsByTagName(pageContents,"span","genre element");
+        List<WebElement> spans = getListOfWebElements(() -> pageContents.findElements(By.tagName("span")), "genre element");
+
         for (WebElement span : spans)
         {
             if (span.getAttribute("itemprop") != null && span.getAttribute("itemprop").toLowerCase().contains("name"))
