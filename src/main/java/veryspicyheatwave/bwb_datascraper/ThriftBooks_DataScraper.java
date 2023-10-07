@@ -16,9 +16,10 @@ import org.openqa.selenium.*;
 import org.openqa.selenium.firefox.FirefoxDriver;
 import org.openqa.selenium.firefox.FirefoxOptions;
 import org.openqa.selenium.firefox.FirefoxProfile;
-import org.openqa.selenium.support.ui.ExpectedConditions;
 import org.openqa.selenium.support.ui.Wait;
 import org.openqa.selenium.support.ui.WebDriverWait;
+
+import static veryspicyheatwave.bwb_datascraper.WebRetryTool.*;
 //endregion
 
 public class ThriftBooks_DataScraper
@@ -36,7 +37,7 @@ public class ThriftBooks_DataScraper
     //endregion
 
 
-    public static void main(String[] args) throws IOException, ParseException, InterruptedException
+    public static void main(String[] args) throws IOException, ParseException
     {
         printBanner();
         Scanner keyboard = new Scanner(System.in);
@@ -74,11 +75,15 @@ public class ThriftBooks_DataScraper
         keyboard.close();
 
         long startTime = System.nanoTime();
-//        printMemoryUsageToEventLog();
 
         scrapeBookPages(getListOfBookURLs(firstPage, lastPage));
 
-        //putCSVDataIntoSQLdb();
+        File failFile = new File(FAIL_FILE);
+        if (failFile.exists())
+        {
+            eventLogEntry("Retrying failed books");
+            scrapeBookPages(getListOfFailedURLs(failFile));
+        }
 
         long endTime = System.nanoTime();
         long duration = (endTime - startTime) / 1000000;
@@ -93,31 +98,35 @@ public class ThriftBooks_DataScraper
         ArrayList<String> listOfBookURLs = new ArrayList<>();
         eventLogEntry("Created the webdriver object to scrape for the book URLs");
         Wait<WebDriver> wait = new WebDriverWait(driver, 4);
+        int numberOfBooks = 0;
 
         for (int pageNo = firstPage; pageNo < lastPage + 1; pageNo++)
         {
             try
             {
                 long currentPageStartTime = System.nanoTime();
-                driver.get("about:blank");
-                Thread.sleep(666);
                 String pageURL = BASE_URL + filterPrimary.getFilterString() + pageNo + FILTER_URL + filterGenre.getFilterNo();
-                driver.get(pageURL);
+
+                loadWebPage(driver, "about:blank","blank page");
+                Thread.sleep(666);
+
+                loadWebPage(driver, pageURL,"blank page");
                 Thread.sleep(2000);
 
                 WebElement searchContainer = getWebElementByXPath(driver, wait, "/html/body/div[4]/div/div[2]/div/div[2]/div/div/div/div/div[2]/div[2]/div[1]/div/div[1]", "page " + pageNo + " search results");
 
-                List<WebElement> books = searchContainer.findElements(By.tagName("a"));
+                List<WebElement> books = getListOfWebElementsByTagName(searchContainer,"a","list of books");
                 for (WebElement book : books)
                 {
                     String bookURL = book.getAttribute("href");
                     listOfBookURLs.add(bookURL);
                 }
-                eventLogEntry("Got a list of book links from page " + pageNo);
+                int booksRetrieved = listOfBookURLs.size() - numberOfBooks;
+                numberOfBooks = listOfBookURLs.size();
+                eventLogEntry("Got a list of " + booksRetrieved + " book links from page " + pageNo);
                 long currentPageEndTime = System.nanoTime();
                 long duration = (currentPageEndTime - currentPageStartTime) / 1000000;
                 eventLogEntry(printDurationFromNanoseconds((int) duration) + " spent scraping page " + pageNo);
-//                printMemoryUsageToEventLog();
             }
             catch (RuntimeException | InterruptedException e)
             {
@@ -131,7 +140,6 @@ public class ThriftBooks_DataScraper
         }
 
         eventLogEntry("Successfully retrieved " + listOfBookURLs.size() + " book links from " + (lastPage - firstPage + 1) + " pages");
-        driver.close();
         driver.quit();
         eventLogEntry("WebDriver instance successfully closed");
         return listOfBookURLs;
@@ -139,7 +147,7 @@ public class ThriftBooks_DataScraper
 
 
 
-    static void scrapeBookPages(@NotNull ArrayList<String> listOfBookURLs) throws IOException, InterruptedException, ParseException
+    static void scrapeBookPages(@NotNull ArrayList<String> listOfBookURLs) throws IOException, ParseException
     {
         WebDriver driver = getFFXDriver();
         eventLogEntry("Created the webdriver object to scrape the book URLs for book data");
@@ -153,7 +161,8 @@ public class ThriftBooks_DataScraper
             book.link = bookURL;
             try
             {
-                driver.get(book.link);
+                loadWebPage(driver, bookURL,"book number " + listOfBookURLs.indexOf(bookURL));
+                driver.get(bookURL);
                 Thread.sleep(400);
                 parseTitleAuthor(driver.getTitle(), book);
 
@@ -176,7 +185,6 @@ public class ThriftBooks_DataScraper
                 writeLineToCSV(dataEntry);
                 insertBookIntoSQLdb(dataEntry, 1 + listOfBookURLs.indexOf(bookURL));
                 eventLogEntry(String.format("Successfully added book number %,d titled \"%s\" to the file", (1 + listOfBookURLs.indexOf(bookURL)), book.title));
-//                printMemoryUsageToEventLog();
 
                 bookSuccesses++;
             }
@@ -199,44 +207,12 @@ public class ThriftBooks_DataScraper
             }
         }
 
-        driver.close();
         driver.quit();
         eventLogEntry("WebDriver instance successfully closed");
-        eventLogEntry("Web scraping complete. " + bookSuccesses + " books successfully added. " + bookFailures + " books failed.");
+        eventLogEntry("Web scraping complete: " + bookSuccesses + " books successfully added");
+        eventLogEntry(bookFailures + " books failed to successfully parse");
     }
-
-
-    static WebElement getWebElementByXPath(WebDriver driver, Wait<WebDriver> wait, String xpathExpression, String elementDescription) throws InterruptedException, RuntimeException
-    {
-        int retryTimer = 0;
-        int tryCount;
-        WebElement resp = null;
-        for (tryCount = 1; tryCount <= 4; tryCount++)
-        {
-            try
-            {
-                wait.until(d -> driver.findElement(By.xpath(xpathExpression)).isDisplayed());
-                resp = driver.findElement(By.xpath(xpathExpression));
-            }
-            catch (org.openqa.selenium.TimeoutException | org.openqa.selenium.StaleElementReferenceException | NullPointerException e)
-            {
-                eventLogEntry("Error: Exception while trying to get the WebElement: " + elementDescription);
-                eventLogEntry(e.getMessage());
-                if (tryCount == 4)
-                {
-                    eventLogEntry("Error: Failed to get the WebElement: " + elementDescription);
-                    throw new RuntimeException("Error: Exception while trying to get the WebElement: " + elementDescription, e);
-                }
-                else
-                {
-                    retryTimer += (tryCount * 1000);
-                    Thread.sleep(retryTimer);
-                    eventLogEntry("Attempting try number " + (1 + tryCount) + " after a " + (retryTimer / 1000) + " second wait");
-                }
-            }
-        }
-        return resp;
-    }//endregion
+    //endregion
 
 
     //region WebElement Parsers
@@ -255,21 +231,17 @@ public class ThriftBooks_DataScraper
     static void parseButtonContainer(@NotNull WebDriver driver, Wait<WebDriver> wait, BookEntry book) throws InterruptedException, StaleElementReferenceException, TimeoutException
     {
         WebElement buttonContainer = getWebElementByXPath(driver, wait, "//div[@class='WorkSelector-row WorkSelector-td-height']", "button container");
-        //<div class="WorkSelector-row WorkSelector-td-height"><button class="NewButton WorkSelector-button is-selected" title="" type="button" aria-selected="true" aria-current="false"><div class="WorkSelector-bold">Hardcover</div><div class=""><span>$4.09 - $22.63</span></div><div class="tb-hiddenText">Hardcover $4.09 - $22.63</div></button><button class="NewButton WorkSelector-button" title="" type="button" aria-selected="false" aria-current="false"><div class="WorkSelector-bold">Paperback</div><div class=""><span>$4.29 - $14.48</span></div><div class="tb-hiddenText">Paperback $4.29 - $14.48</div></button><button class="NewButton WorkSelector-button" title="" type="button" aria-selected="false" aria-current="false"><div class="WorkSelector-bold">Mass Market Paperback</div><div class=""><span>$3.99 - $4.19</span></div><div class="tb-hiddenText">Mass Market Paperback $3.99 - $4.19</div></button><button class="NewButton WorkSelector-button" title="" type="button" aria-selected="false" aria-current="false"><div class="WorkSelector-bold">Tankobon Softcover</div><div class=""><span>--</span></div><div class="tb-hiddenText">Tankobon Softcover --</div></button></div>
 
-        List<WebElement> buttons = buttonContainer.findElements(By.tagName("button"));
+        List<WebElement> buttons = getListOfWebElementsByTagName(buttonContainer,"button","list of buttons");
         for (WebElement button : buttons)
         {
-            wait.until(ExpectedConditions.visibilityOf(button));
-            button.click();
-            Thread.sleep(150);
-
-            List<WebElement> buttDetails = button.findElements(By.xpath("./child::div"));
+            List<WebElement> buttDetails = getListOfWebElementsByXPath(button,"./child::div","button details");
             for (WebElement buttDetail : buttDetails)
             {
                 if (buttDetail.getText().equalsIgnoreCase("paperback"))
                 {
-                    WebElement priceRangeElement = buttDetail.findElement(By.xpath("./following-sibling::div[@class='']//span"));
+                    clickButton(button, "paperback button");
+                    WebElement priceRangeElement = getWebElementByXPath(buttDetail,wait,"./following-sibling::div[@class='']//span","price range");
                     if (priceRangeElement.getText().contains("$"))
                     {
                         getNewAndUsedPrices(book.paperbackPrices, priceRangeElement.getText());
@@ -285,13 +257,12 @@ public class ThriftBooks_DataScraper
 
                 if (buttDetail.getText().equalsIgnoreCase("mass market paperback"))
                 {
-                    button.click();
-                    Thread.sleep(150);
+                    clickButton(button, "hardcover button");
                     WebElement image = getWebElementByXPath(driver, wait, "//img[@itemprop='image']", "mass market paperback image link");
                     book.massImageLink = image.getAttribute("src");
                     if (book.usedPrice <= 0 || book.newPrice <= 0)
                     {
-                        WebElement priceRangeElement = buttDetail.findElement(By.xpath("./following-sibling::div[@class='']//span"));
+                        WebElement priceRangeElement = getWebElementByXPath(buttDetail,wait,"./following-sibling::div[@class='']//span","price range");
                         getNewAndUsedPrices(book.massMarketPrices, priceRangeElement.getText());
                     }
                     continue;
@@ -299,7 +270,7 @@ public class ThriftBooks_DataScraper
 
                 if (buttDetail.getText().equalsIgnoreCase("hardcover"))
                 {
-                    WebElement priceRangeElement = buttDetail.findElement(By.xpath("./following-sibling::div[@class='']//span"));
+                    WebElement priceRangeElement = getWebElementByXPath(buttDetail,wait,"./following-sibling::div[@class='']//span","price range");
                     if (priceRangeElement.getText().contains("$"))
                     {
                         getNewAndUsedPrices(book.hardcoverPrices, priceRangeElement.getText());
@@ -311,9 +282,9 @@ public class ThriftBooks_DataScraper
     }
 
 
-    static void parseTableDetails(@NotNull WebElement table, BookEntry book) throws StaleElementReferenceException, TimeoutException
+    static void parseTableDetails(@NotNull WebElement table, BookEntry book) throws StaleElementReferenceException, TimeoutException, InterruptedException
     {
-        List<WebElement> elements = table.findElements(By.tagName("span"));
+        List<WebElement> elements = getListOfWebElementsByTagName(table,"span","table details");
         int index = -1;
 
         for (WebElement detail : elements)
@@ -359,9 +330,9 @@ public class ThriftBooks_DataScraper
     }
 
 
-    static String parseGenreString(@NotNull WebElement pageContents)
+    static String parseGenreString(@NotNull WebElement pageContents) throws InterruptedException
     {
-        List<WebElement> spans = pageContents.findElements(By.tagName("span"));
+        List<WebElement> spans = getListOfWebElementsByTagName(pageContents,"span","genre element");
         for (WebElement span : spans)
         {
             if (span.getAttribute("itemprop") != null && span.getAttribute("itemprop").toLowerCase().contains("name"))
@@ -474,7 +445,6 @@ public class ThriftBooks_DataScraper
         Connection con = null;
         try
         {
-            Thread.sleep(200);
             String insertionQuery = "INSERT INTO books(title,author,used_price,new_price,genre,binding_type,isbn_code,release_date,page_length,language,bookURL,bookImageURL1,bookImageURL2) VALUES";
             insertionQuery += "(" + csvStr + ");";
 
@@ -483,7 +453,7 @@ public class ThriftBooks_DataScraper
             Statement statement = con.createStatement();
             statement.execute(insertionQuery);
             eventLogEntry("Book " + bookNo + ": Successfully added to SQL table");
-        } catch (SQLException | InterruptedException sqlE)
+        } catch (SQLException sqlE)
         {
             eventLogEntry("Book " + bookNo + ": " + sqlE.getMessage());
         } finally
@@ -494,63 +464,17 @@ public class ThriftBooks_DataScraper
     }
 
 
-
-    static void putCSVDataIntoSQLdb() throws FileNotFoundException, ClassNotFoundException, SQLException
+    static @NotNull ArrayList<String> getListOfFailedURLs(File failFile) throws FileNotFoundException
     {
-        File csvFile = new File(SAVE_FILE);
-        Scanner csvFileScan = new Scanner(csvFile);
+        Scanner failFileScan = new Scanner(failFile);
+        ArrayList<String> failURLs = new ArrayList<>(){};
 
-        eventLogEntry("Connecting to SQL database");
-        Class.forName("com.mysql.cj.jdbc.Driver");
-
-        int bookNo = 0, bookSuccesses = 0, bookFailures = 0;
-        String pwSQL = getSQLPassword();
-
-        while (csvFileScan.hasNext())
+        while (failFileScan.hasNext())
         {
-            String csvStr = csvFileScan.nextLine();
-            if (csvStr.contains("Release Date,Page Length"))
-                continue;
-
-            bookNo++;
-
-            Connection con = null;
-            try
-            {
-                Thread.sleep(200);
-                String insertionQuery = "INSERT INTO books(title,author,used_price,new_price,genre,binding_type,isbn_code,release_date,page_length,language,bookURL,bookImageURL1,bookImageURL2) VALUES";
-                insertionQuery += "(" + csvStr + ");";
-
-                con = DriverManager.getConnection(
-                        "jdbc:mysql://localhost:3306/thriftBooksDB", "root", pwSQL);
-                Statement statement = con.createStatement();
-                statement.execute(insertionQuery);
-                eventLogEntry("Book " + bookNo + ": Successfully added to SQL table");
-                bookSuccesses++;
-            } catch (SQLException | InterruptedException sqlE)
-            {
-                if (bookFailures == 0)
-                    writeFailuresToCSV("Title, Author, Used Price, New Price, Genre, Format, ISBN Code, Release Date," +
-                            "Page Length, Language, ThriftBooks URL, Image Link 1, Image Link 2");
-                eventLogEntry("Book " + bookNo + ": " + sqlE.getMessage());
-                writeFailuresToCSV(csvStr);
-                bookFailures++;
-            } finally
-            {
-                assert con != null;
-                con.close();
-            }
+            failURLs.add(failFileScan.nextLine());
         }
-        csvFileScan.close();
-        if (csvFile.delete())
-        {
-            eventLogEntry("Deleted the CSV storage file");
-        }
-        else
-        {
-            eventLogEntry("Failed to delete the CSV storage file");
-        }
-        eventLogEntry("SQL Insertions complete. " + bookSuccesses + " books successfully added. " + bookFailures + " executions failed.");
+        failFileScan.close();
+        return failURLs;
     }
 
 
@@ -609,12 +533,6 @@ public class ThriftBooks_DataScraper
 
         return timeString;
     }
-
-
-//    static void printMemoryUsageToEventLog()
-//    {
-//        eventLogEntry(String.format("Memory usage: %d kb / %d kb", (Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()) / 1024, Runtime.getRuntime().totalMemory() / 1024));
-//    }
     //endregion
 
 
