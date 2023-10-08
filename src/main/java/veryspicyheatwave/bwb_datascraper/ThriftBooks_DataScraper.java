@@ -1,9 +1,10 @@
-//region Import Statements
 package veryspicyheatwave.bwb_datascraper;
 
 import java.io.*;
-import java.net.URL;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.sql.*;
@@ -15,6 +16,7 @@ import java.util.*;
 import java.util.Date;
 import java.util.List;
 
+import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.NotNull;
 
 import org.openqa.selenium.*;
@@ -25,7 +27,6 @@ import org.openqa.selenium.support.ui.Wait;
 import org.openqa.selenium.support.ui.WebDriverWait;
 
 import static veryspicyheatwave.bwb_datascraper.WebRetryTool.*;
-//endregion
 
 public class ThriftBooks_DataScraper
 {
@@ -33,12 +34,15 @@ public class ThriftBooks_DataScraper
     final static String BASE_URL = "https://www.thriftbooks.com";
     final static String FILTER_URL = "&b.pp=30&b.f.lang[]=40&b.pt=1&b.f.t[]=";
     final static String GECKO_DRIVER = "geckodriver.exe";
-    final static String SAVE_FILE = "dataScrape_" + System.currentTimeMillis() +".csv";
-    final static String LOG_FILE = "dataScrape_" + System.currentTimeMillis() +".log";
-    final static String FAIL_FILE = "dataScrape_" + System.currentTimeMillis() +"_FAILS.csv";
+    final static long TIME_STAMP = System.currentTimeMillis();
+    final static String SAVE_FILE = "dataScrape_" + TIME_STAMP +".csv";
+    final static String LOG_FILE = "dataScrape_" + TIME_STAMP +".log";
+    final static String FAIL_FILE = "dataScrape_FAILS.csv";
+    final static String URL_FILE = "dataScrape_URLs.csv";
     static boolean loggingEvents = false;
     static Genre filterGenre;
     static PrimaryFilter filterPrimary;
+    static long[] averageTimes;
     //endregion
 
 
@@ -46,53 +50,55 @@ public class ThriftBooks_DataScraper
     {
         printBanner();
         Scanner keyboard = new Scanner(System.in);
+        int firstPage = 0, lastPage = 0;
 
-        int firstPage;
-        int lastPage;
-
-        do
-        {
-            firstPage = getFirstOrLastPage(keyboard, "first");
-            if (firstPage == 0)
+        String scrapeMode = askWhatPagesToScrape(keyboard);
+            if (scrapeMode.equalsIgnoreCase("n"))
             {
-                eventLogEntry("User chose to exit program...");
-                return;
-            }
-            lastPage = getFirstOrLastPage(keyboard, "last");
-            if (lastPage < firstPage)
-                System.out.println("**ERROR: Last page can't be smaller than first page!\t");
+                do
+                {
+                    firstPage = getFirstOrLastPage(keyboard, "first");
+                    if (firstPage == 0)
+                    {
+                        eventLogEntry("User chose to exit program...");
+                        return;
+                    }
+                    lastPage = getFirstOrLastPage(keyboard, "last");
+                    if (lastPage < firstPage)
+                        System.out.println("**ERROR: Last page can't be smaller than first page!\t");
+                }
+                while (lastPage < firstPage);
+
+                filterPrimary = getPrimaryFilter(keyboard);
+                filterGenre = getBookGenre(keyboard);
+                eventLogEntry("User selected catalog pages " + firstPage + " to " + lastPage + " filtering by the " + filterPrimary.getDisplayString() + " " + filterGenre.getDisplayString() + " books");
         }
-        while (lastPage < firstPage);
-
-        filterPrimary = getPrimaryFilter(keyboard);
-        filterGenre = getBookGenre(keyboard);
-
-        eventLogEntry("User selected catalog pages " + firstPage + " to " + lastPage + " filtering by the " + filterPrimary.getDisplayString() + " " + filterGenre.getDisplayString() + " books");
 
         loggingEvents = askIfUserWantsToLog(keyboard);
         if (loggingEvents)
             eventLogEntry("Log file generated");
 
         writeLineToCSV("Title, Author, Used Price, New Price, Genre, Format, ISBN Code, Release Date," +
-                        "Page Length, Language, ThriftBooks URL, Image Link 1, Image Link 2");
-
+                        "Page Length, Language, ThriftBooks URL");
         eventLogEntry("CSV file generated");
-        keyboard.close();
 
+        keyboard.close();
         long startTime = System.nanoTime();
 
-        scrapeBookPages(getListOfBookURLs(firstPage, lastPage));
+        if (scrapeMode.equalsIgnoreCase("n"))
+            scrapeBookPages(getListOfBookURLs(firstPage, lastPage));
 
-        File failFile = new File(FAIL_FILE);
-        if (failFile.exists())
-        {
-            eventLogEntry("Retrying failed books");
-            scrapeBookPages(getListOfFailedURLs(failFile));
-        }
+        else if (scrapeMode.equalsIgnoreCase("f"))
+            scrapeBookPages(getListOfURLsFromFile(new File(FAIL_FILE)));
+
+        else if (scrapeMode.equalsIgnoreCase("p"))
+            scrapeBookPages(getListOfURLsFromFile(new File(URL_FILE)));
 
         long endTime = System.nanoTime();
         long duration = (endTime - startTime) / 1000000;
-        eventLogEntry("Task complete in " + printDurationFromNanoseconds((int)duration));
+
+        eventLogEntry("Full job complete in " + getFormattedDurationString((int)duration));
+        eventLogEntry("Average of " + getFormattedDurationString((int)getAverageTime(averageTimes)) + " per book");
     }
 
 
@@ -112,31 +118,40 @@ public class ThriftBooks_DataScraper
                 long currentPageStartTime = System.nanoTime();
                 String pageURL = BASE_URL + filterPrimary.getFilterString() + pageNo + FILTER_URL + filterGenre.getFilterNo();
 
-                performWebAction(() -> driver.get("about:blank"), "load a blank page");
+                performWebActionWithRetries(() -> {
+                    driver.get("about:blank");
+                    return new ArrayList<>();
+                }, "load a blank page");
                 Thread.sleep(666);
 
-                performWebAction(() -> driver.get(pageURL), "load the URL for catalog page " + pageNo);
+                performWebActionWithRetries(() -> {
+                    driver.get(pageURL);
+                    return new ArrayList<>();
+                }, "load the URL for catalog page " + pageNo);
                 Thread.sleep(2000);
 
-                WebElement searchContainer = getWebElement(() -> {
+                WebElement searchContainer = performWebActionWithRetries(() -> {
                     String xpathExpression = "/html/body/div[4]/div/div[2]/div/div[2]/div/div/div/div/div[2]/div[2]/div[1]/div/div[1]";
-                    wait.until(d -> driver.findElement(By.xpath(xpathExpression)).isDisplayed());
-                    return driver.findElement(By.xpath(xpathExpression));
-                }, "page " + pageNo + " search results");
+                    return listGetterXPath(driver, wait, xpathExpression, true);
+                }, "collect catalog page " + pageNo + "'s search results").get(0);
 
-                List<WebElement> books = getListOfWebElements(() -> searchContainer.findElements(By.tagName("a")), "list of books");
+                List<WebElement> books = performWebActionWithRetries(() -> {
+                    String tagName = "a";
+                    return listGetterTagName(searchContainer, wait, tagName, false);
+                }, "find the books in the search results container");
 
                 for (WebElement book : books)
                 {
                     String bookURL = book.getAttribute("href");
                     listOfBookURLs.add(bookURL);
+                    writeURLsToFile(bookURL, new File(URL_FILE));
                 }
                 int booksRetrieved = listOfBookURLs.size() - numberOfBooks;
                 numberOfBooks = listOfBookURLs.size();
                 eventLogEntry("Got a list of " + booksRetrieved + " book links from page " + pageNo);
                 long currentPageEndTime = System.nanoTime();
                 long duration = (currentPageEndTime - currentPageStartTime) / 1000000;
-                eventLogEntry(printDurationFromNanoseconds((int) duration) + " spent scraping page " + pageNo);
+                eventLogEntry(getFormattedDurationString((int) duration) + " spent scraping page " + pageNo);
             }
             catch (RuntimeException | InterruptedException e)
             {
@@ -152,9 +167,9 @@ public class ThriftBooks_DataScraper
         eventLogEntry("Successfully retrieved " + listOfBookURLs.size() + " book links from " + (lastPage - firstPage + 1) + " pages");
         driver.quit();
         eventLogEntry("WebDriver instance successfully closed");
+        averageTimes = new long[listOfBookURLs.size()];
         return listOfBookURLs;
     }
-
 
 
     static void scrapeBookPages(@NotNull ArrayList<String> listOfBookURLs) throws IOException, ParseException
@@ -162,7 +177,8 @@ public class ThriftBooks_DataScraper
         WebDriver driver = getFFXDriver();
         eventLogEntry("Created the webdriver object to scrape the book URLs for book data");
         Wait<WebDriver> wait = new WebDriverWait(driver, 4);
-        int bookSuccesses = 0, bookFailures = 0;
+        int bookSuccesses = 0, bookFailures = 0, bookDuplicates = 0;
+        int avgIndex = 0;
 
         for (String bookURL : listOfBookURLs)
         {
@@ -171,42 +187,43 @@ public class ThriftBooks_DataScraper
             book.link = bookURL;
             try
             {
-                performWebAction(() -> driver.get(bookURL), "load book number " + listOfBookURLs.indexOf(bookURL) + " book URL");
+                performWebActionWithRetries(() -> {
+                    driver.get(bookURL);
+                    return new ArrayList<>();
+                    }, "load book number " + listOfBookURLs.indexOf(bookURL) + " book URL");
                 Thread.sleep(400);
                 parseTitleAuthor(driver.getTitle(), book);
 
-                WebElement pageContents = getWebElement(() -> {
+                WebElement pageContents = performWebActionWithRetries(() -> {
                     String xpathExpression = "//div[@class='Content']";
-                    wait.until(d -> driver.findElement(By.xpath(xpathExpression)).isDisplayed());
-                    return driver.findElement(By.xpath(xpathExpression));
-                }, "book page contents");
-                book.genre = parseGenreString(pageContents);
+                    return listGetterXPath(driver, wait, xpathExpression, true);
+                }, "build a list of all of the book page contents").get(0);
+                book.genre = parseGenreString(pageContents, wait);
 
-                WebElement titleBlock = getWebElement(() -> {
+                WebElement titleBlock = performWebActionWithRetries(() -> {
                     String xpathExpression = "//h1[@class='WorkMeta-title Alternative Alternative-title']";
-                    wait.until(d -> driver.findElement(By.xpath(xpathExpression)).isDisplayed());
-                    return driver.findElement(By.xpath(xpathExpression));
-                }, "title block");
+                    return listGetterXPath(driver, wait, xpathExpression, true);
+                }, "locate and parse the title block").get(0);
                 if (titleBlock.getText() != null)
                     book.title = titleBlock.getText();
 
                 parseButtonContainer(driver, wait, book);
 
-                downloadImageFromURL(book.paperbackImageLink,book.title,"1");
-                downloadImageFromURL(book.massImageLink,book.title,"2");
-
                 SimpleDateFormat formatter = new SimpleDateFormat("yyyy-MM-dd");
 
-                String dataEntry = String.format("'%s','%s',%.2f,%.2f,'%s','%s','%s','%s',%d,'%s','%s','%s','%s'",
-                        book.title.replace("'", "\\'"), book.author, book.usedPrice, book.newPrice, book.genre.replace("'", "\\'"),
+                String dataEntry = String.format("'%s','%s',%.2f,%.2f,'%s','%s','%s','%s',%d,'%s','%s'",
+                        book.title.replace("'", "\\'"), book.author.replace("'", "\\'"), book.usedPrice, book.newPrice, book.genre.replace("'", "\\'"),
                         book.format, book.isbnCode, formatter.format(book.releaseDate),
-                        book.pageLength, book.language, book.link, book.paperbackImageLink, book.massImageLink);
+                        book.pageLength, book.language, book.link);
 
                 writeLineToCSV(dataEntry);
-                if (!insertBookIntoSQLdb(dataEntry, 1 + listOfBookURLs.indexOf(bookURL)))
-                {
-                    writeFailuresToCSV(bookURL);
-                }
+                insertBookIntoSQLdb(dataEntry, 1 + listOfBookURLs.indexOf(bookURL));
+
+                if (!(book.paperbackImageLink == null))
+                    downloadImageFromURL(book.paperbackImageLink,book.title,"01");
+
+                if (!(book.massImageLink == null))
+                    downloadImageFromURL(book.massImageLink,book.title,"02");
 
                 eventLogEntry(String.format("Successfully added book number %,d titled \"%s\" to the CSV file", (1 + listOfBookURLs.indexOf(bookURL)), book.title));
                 bookSuccesses++;
@@ -219,14 +236,24 @@ public class ThriftBooks_DataScraper
                 e.printStackTrace(new PrintWriter(sw));
                 eventLogEntry(sw.toString());
                 sw.close();
-                writeFailuresToCSV(bookURL);
-                bookFailures++;
+                if (e.getMessage().contains("Duplicate entry") && !e.getMessage().contains("'null'"))
+                {
+                    bookDuplicates++;
+                }
+                else
+                {
+                    writeURLsToFile(bookURL, new File(FAIL_FILE));
+                    bookFailures++;
+                }
             }
             finally
             {
+                System.out.println(bookSuccesses + " successes, " + bookFailures + " failures, " + bookDuplicates + " duplicate entries");
                 long currentBookEndTime = System.nanoTime();
                 long duration = (currentBookEndTime - currentBookStartTime) / 1000000;
-                eventLogEntry(printDurationFromNanoseconds((int) duration) + " spent on scraping book " + (1 + listOfBookURLs.indexOf(bookURL)));
+                averageTimes[avgIndex] = duration;
+                avgIndex++;
+                eventLogEntry(getFormattedDurationString((int) duration) + " spent on scraping book " + (1 + listOfBookURLs.indexOf(bookURL)));
             }
         }
 
@@ -234,6 +261,7 @@ public class ThriftBooks_DataScraper
         eventLogEntry("WebDriver instance successfully closed");
         eventLogEntry("Web scraping complete: " + bookSuccesses + " books successfully added");
         eventLogEntry(bookFailures + " books could not be processed");
+        eventLogEntry(bookDuplicates + " books were duplicate entry attempts to the database");
     }
     //endregion
 
@@ -253,89 +281,88 @@ public class ThriftBooks_DataScraper
 
     static void parseButtonContainer(@NotNull WebDriver driver, Wait<WebDriver> wait, BookEntry book) throws InterruptedException, StaleElementReferenceException, TimeoutException
     {
-        WebElement buttonContainer = getWebElement(() -> {
+        WebElement buttonContainer = performWebActionWithRetries(() -> {
             String xpathExpression = "//div[@class='WorkSelector-row WorkSelector-td-height']";
-            wait.until(d -> driver.findElement(By.xpath(xpathExpression)).isDisplayed());
-            return driver.findElement(By.xpath(xpathExpression));
-        }, "button container");
+            return listGetterXPath(driver, wait, xpathExpression, true);
+        }, "locate the button container").get(0);
 
-        List<WebElement> buttons = getListOfWebElements(() -> buttonContainer.findElements(By.tagName("button")), "list of buttons");
+        List<WebElement> buttons = performWebActionWithRetries(() -> {
+            String tagName = "button";
+            return listGetterTagName(buttonContainer, wait, tagName, false);
+        }, "get the list of book binding buttons");
 
         for (WebElement button : buttons)
         {
-            List<WebElement> buttDetails = getListOfWebElements(() -> button.findElements(By.xpath("./child::div")), "button details");
+            List<WebElement> buttDetails = performWebActionWithRetries(() -> {
+                String xpathExpression = "./child::div";
+                return listGetterXPath(button,wait,xpathExpression,false);
+            }, "get the button details for a given button");
             for (WebElement buttDetail : buttDetails)
             {
                 if (buttDetail.getText().equalsIgnoreCase("paperback"))
                 {
-                    performWebAction(() -> {
+                    performWebActionWithRetries(() -> {
                         JavascriptExecutor js = (JavascriptExecutor)driver;
                         js.executeScript("arguments[0].click();", button);
-                    }, "click a paperback button");
+                        return new ArrayList<>();
+                    }, "click the paperback filter button");
 
-                    WebElement priceRangeElement = getWebElement(() -> {
+                    WebElement priceRangeElement = performWebActionWithRetries(() -> {
                         String xpathExpression = "./following-sibling::div[@class='']//span";
-                        wait.until(d -> buttDetail.findElement(By.xpath(xpathExpression)).isDisplayed());
-                        return buttDetail.findElement(By.xpath(xpathExpression));
-                    }, "price range");
-
+                        return listGetterXPath(buttDetail,wait,xpathExpression,true);
+                    }, "identify the paperback price range").get(0);
                     if (priceRangeElement.getText().contains("$"))
                     {
                         getNewAndUsedPrices(book.paperbackPrices, priceRangeElement.getText());
                     }
 
-                    WebElement image = getWebElement(() -> {
+                    WebElement image = performWebActionWithRetries(() -> {
                         String xpathExpression = "//img[@itemprop='image']";
-                        wait.until(d -> driver.findElement(By.xpath(xpathExpression)).isDisplayed());
-                        return driver.findElement(By.xpath(xpathExpression));
-                    }, "paperback image link");
-
+                        return listGetterXPath(driver,wait,xpathExpression,true);
+                    }, "store the paperback image link").get(0);
                     book.paperbackImageLink = image.getAttribute("src");
 
-                   WebElement table = getWebElement(() -> {
-                        String xpathExpression = "//div[@class='WorkMeta-details is-collapsed']";
-                        wait.until(d -> driver.findElement(By.xpath(xpathExpression)).isDisplayed());
-                        return driver.findElement(By.xpath(xpathExpression));
-                    }, "book data table");
+                   WebElement table = performWebActionWithRetries(() -> {
+                       String xpathExpression = "//div[@class='WorkMeta-details is-collapsed']";
+                       return listGetterXPath(driver,wait,xpathExpression,true);
+                   }, "find the paperback book data table").get(0);
+                    parseTableDetails(table, wait, book);
 
-                    parseTableDetails(table, book);
                     continue;
                 }
 
                 if (buttDetail.getText().equalsIgnoreCase("mass market paperback"))
                 {
-                    performWebAction(() -> {
+                    performWebActionWithRetries(() -> {
                         JavascriptExecutor js = (JavascriptExecutor)driver;
                         js.executeScript("arguments[0].click();", button);
-                    }, "click a hardcover button");
+                        return new ArrayList<>();
+                    }, "click the mass market paperback filter button");
 
-                    WebElement image = getWebElement(() -> {
-                        String xpathExpression = "//img[@itemprop='image']";
-                        wait.until(d -> driver.findElement(By.xpath(xpathExpression)).isDisplayed());
-                        return driver.findElement(By.xpath(xpathExpression));
-                    }, "mass market paperback image link");
-
-                    book.massImageLink = image.getAttribute("src");
-                    if (book.usedPrice <= 0 || book.newPrice <= 0)
+                    WebElement priceRangeElement = performWebActionWithRetries(() -> {
+                        String xpathExpression = "./following-sibling::div[@class='']//span";
+                        return listGetterXPath(buttDetail,wait,xpathExpression,true);
+                    }, "identify the mass market paperback price range").get(0);
+                    if (priceRangeElement.getText().contains("$"))
                     {
-                        WebElement priceRangeElement = getWebElement(() -> {
-                            String xpathExpression = "./following-sibling::div[@class='']//span";
-                            wait.until(d -> buttDetail.findElement(By.xpath(xpathExpression)).isDisplayed());
-                            return buttDetail.findElement(By.xpath(xpathExpression));
-                        }, "price range");
-
                         getNewAndUsedPrices(book.massMarketPrices, priceRangeElement.getText());
                     }
+
+                    WebElement image = performWebActionWithRetries(() -> {
+                        String xpathExpression = "//img[@itemprop='image']";
+                        return listGetterXPath(driver,wait,xpathExpression,true);
+                    }, "store the mass market paperback image link").get(0);
+                    book.massImageLink = image.getAttribute("src");
+
                     continue;
                 }
 
                 if (buttDetail.getText().equalsIgnoreCase("hardcover"))
                 {
-                    WebElement priceRangeElement = getWebElement(() -> {
+                    WebElement priceRangeElement = performWebActionWithRetries(() -> {
                         String xpathExpression = "./following-sibling::div[@class='']//span";
-                        wait.until(d -> buttDetail.findElement(By.xpath(xpathExpression)).isDisplayed());
-                        return buttDetail.findElement(By.xpath(xpathExpression));
-                    }, "price range");
+                        return listGetterXPath(buttDetail,wait,xpathExpression,true);
+                    }, "identify the hardcover price range").get(0);
                     if (priceRangeElement.getText().contains("$"))
                     {
                         getNewAndUsedPrices(book.hardcoverPrices, priceRangeElement.getText());
@@ -347,9 +374,12 @@ public class ThriftBooks_DataScraper
     }
 
 
-    static void parseTableDetails(@NotNull WebElement table, BookEntry book) throws StaleElementReferenceException, TimeoutException, InterruptedException
+    static void parseTableDetails(@NotNull WebElement table, Wait<WebDriver> wait, BookEntry book) throws StaleElementReferenceException, TimeoutException, InterruptedException
     {
-        List<WebElement> elements = getListOfWebElements(() -> table.findElements(By.tagName("span")), "table details");
+        List<WebElement> elements = performWebActionWithRetries(() -> {
+            String tagName = "span";
+            return listGetterTagName(table,wait,tagName,false);
+        }, "get the book details from the lower table");
         int index = -1;
 
         for (WebElement detail : elements)
@@ -395,9 +425,12 @@ public class ThriftBooks_DataScraper
     }
 
 
-    static String parseGenreString(@NotNull WebElement pageContents) throws InterruptedException
+    static String parseGenreString(@NotNull WebElement pageContents, Wait<WebDriver> wait) throws InterruptedException
     {
-        List<WebElement> spans = getListOfWebElements(() -> pageContents.findElements(By.tagName("span")), "genre element");
+        List<WebElement> spans = performWebActionWithRetries(() -> {
+            String tagName = "span";
+            return listGetterTagName(pageContents,wait,tagName,false);
+        }, "find the genre element at the top of the page");
 
         for (WebElement span : spans)
         {
@@ -424,6 +457,43 @@ public class ThriftBooks_DataScraper
         {
             eventLogEntry("Failed to parse date/time value from text string...");
         }
+        return resp;
+    }
+    //endregion
+
+
+    //region SQL Methods
+    static void insertBookIntoSQLdb(String csvStr, int bookNo) throws FileNotFoundException, ClassNotFoundException, SQLException
+    {
+        Class.forName("com.mysql.cj.jdbc.Driver");
+        String pwSQL = getSQLPassword();
+        Connection con = null;
+        try
+        {
+            String insertionQuery = "INSERT INTO books(title,author,used_price,new_price,genre,binding_type,isbn_code,release_date,page_length,language,bookURL) VALUES";
+            insertionQuery += "(" + csvStr + ");";
+
+            con = DriverManager.getConnection(
+                    "jdbc:mysql://localhost:3306/thriftBooksDB", "root", pwSQL);
+            Statement statement = con.createStatement();
+            statement.execute(insertionQuery);
+            eventLogEntry("Book " + bookNo + " Successfully added to SQL table");
+            con.close();
+        } catch (SQLException sqlE)
+        {
+            assert con != null;
+            con.close();
+            throw sqlE;
+        }
+    }
+
+
+    static String getSQLPassword() throws FileNotFoundException
+    {
+        File pwFile = new File("pw.txt");
+        Scanner pwFileScan = new Scanner(pwFile);
+        String resp = pwFileScan.nextLine();
+        pwFileScan.close();
         return resp;
     }
     //endregion
@@ -458,15 +528,15 @@ public class ThriftBooks_DataScraper
     }
 
 
-    static void writeFailuresToCSV(String dataEntry)
+    static void writeURLsToFile(String dataEntry, File writeFile)
     {
-        try (FileWriter writer = new FileWriter(FAIL_FILE, true))
+        try (FileWriter writer = new FileWriter(writeFile, true))
         {
             writer.write(dataEntry + "\n");
         }
         catch (IOException ex)
         {
-            System.out.println("ERROR: Failed to write to CSV file. Oops!");
+            System.out.println("ERROR: Failed to write to" + writeFile + " Oops!");
         }
     }
 
@@ -503,53 +573,26 @@ public class ThriftBooks_DataScraper
     }
 
 
-    static boolean insertBookIntoSQLdb(String csvStr, int bookNo) throws FileNotFoundException, ClassNotFoundException, SQLException
+    static void downloadImageFromURL(@NotNull String imageURL, @NotNull String bookTitle, String imageNumber)
     {
-        Class.forName("com.mysql.cj.jdbc.Driver");
-        String pwSQL = getSQLPassword();
-        boolean resp = false;
-
-        Connection con = null;
-        try
-        {
-            String insertionQuery = "INSERT INTO books(title,author,used_price,new_price,genre,binding_type,isbn_code,release_date,page_length,language,bookURL,bookImageURL1,bookImageURL2) VALUES";
-            insertionQuery += "(" + csvStr + ");";
-
-            con = DriverManager.getConnection(
-                    "jdbc:mysql://localhost:3306/thriftBooksDB", "root", pwSQL);
-            Statement statement = con.createStatement();
-            statement.execute(insertionQuery);
-            eventLogEntry("Book " + bookNo + ": Successfully added to SQL table");
-            resp = true;
-        } catch (SQLException sqlE)
-        {
-            eventLogEntry("Book " + bookNo + ": " + sqlE.getMessage());
-            if (sqlE.getMessage().contains("Duplicate entry"))
-                resp = true;
-        } finally
-        {
-            assert con != null;
-            con.close();
-        }
-        return resp;
-    }
-
-
-    static void downloadImageFromURL(String imageURL, String bookTitle, String imageNumber)
-    {
+        String cleanBookTitle = bookTitle.replace(":"," -");
         if (imageURL.equalsIgnoreCase("null"))
         {
-            eventLogEntry("No image URL exists");
+            eventLogEntry("No image URL was found");
             return;
         }
 
-        Path fileOutputPath = Paths.get("images/" + bookTitle);
+        Path fileOutputPath = Paths.get("images/" + cleanBookTitle);
         File fileOutputStr =  new File(fileOutputPath + "/" + imageNumber + ".jpg");
         if (!Files.exists(fileOutputPath))
-            new File(String.valueOf(fileOutputPath)).mkdirs();
+            if (!(new File(String.valueOf(fileOutputPath)).mkdirs()))
+            {
+                eventLogEntry("Error while trying to create directory " + fileOutputPath);
+                return;
+            }
 
-        try (BufferedInputStream in = new BufferedInputStream(new URL(imageURL).openStream());
-                FileOutputStream fileOutputStream = new FileOutputStream(fileOutputStr))
+        try (BufferedInputStream in = new BufferedInputStream(new URI(imageURL).toURL().openStream());
+             FileOutputStream fileOutputStream = new FileOutputStream(fileOutputStr))
         {
             byte[] dataBuffer = new byte[1024];
             int bytesRead;
@@ -559,85 +602,29 @@ public class ThriftBooks_DataScraper
             }
             eventLogEntry("Created new image file: " + fileOutputStr);
         }
-        catch (IOException e)
+        catch (IOException | InvalidPathException | URISyntaxException e)
         {
             eventLogEntry("Error while creating image file: " + e.getMessage());
         }
     }
 
 
-    static @NotNull ArrayList<String> getListOfFailedURLs(File failFile) throws FileNotFoundException
+    static @NotNull ArrayList<String> getListOfURLsFromFile(@NotNull File readFile) throws FileNotFoundException
     {
-        Scanner failFileScan = new Scanner(failFile);
-        ArrayList<String> failURLs = new ArrayList<>(){};
+        if (!readFile.exists())
+        {
+            eventLogEntry(readFile + " does not exist! No pages will be scraped");
+            return new ArrayList<>();
+        }
+        Scanner readFileScan = new Scanner(readFile);
+        ArrayList<String> failURLs = new ArrayList<>();
 
-        while (failFileScan.hasNext())
+        while (readFileScan.hasNext())
         {
-            failURLs.add(failFileScan.nextLine());
+            failURLs.add(readFileScan.nextLine());
         }
-        failFileScan.close();
-        if (failFile.delete())
-        {
-            eventLogEntry("Deleted first fail log");
-        }
+        readFileScan.close();
         return failURLs;
-    }
-
-
-    static String getSQLPassword() throws FileNotFoundException
-    {
-        File pwFile = new File("pw.txt");
-        Scanner pwFileScan = new Scanner(pwFile);
-        String resp = pwFileScan.nextLine();
-        pwFileScan.close();
-        return resp;
-    }
-
-
-
-    static @NotNull String printDurationFromNanoseconds(int duration)
-    {
-        int millis = 0, seconds = 0, minutes = 0, hours = 0, days = 0;
-        String timeString = "";
-
-        if (duration > 1000)
-        {
-            millis = (duration % 1000);
-            seconds = (duration / 1000);
-        }
-
-        if (seconds > 60)
-        {
-            minutes = seconds / 60;
-            seconds = seconds % 60;
-        }
-        if (minutes > 60)
-        {
-            hours = minutes / 60;
-            minutes = minutes % 60;
-        }
-        if (duration > 24)
-        {
-            days = hours / 24;
-            hours = hours / 24;
-        }
-
-        if (days > 0)
-        {
-            timeString += String.format("%d days, ", days);
-        }
-        if (hours > 0)
-        {
-            timeString += String.format("%d hours, ", hours);
-        }
-        if (minutes > 0)
-        {
-            timeString += String.format("%d minutes ", minutes);
-        }
-
-        timeString += String.format("%d.%d seconds", seconds, millis);
-
-        return timeString;
     }
     //endregion
 
@@ -679,20 +666,83 @@ public class ThriftBooks_DataScraper
 
     static boolean askIfUserWantsToLog(@NotNull Scanner keyboard)
     {
-        String logEventsResponse;
+        String userResponse;
         do
         {
             System.out.println("Would you like to log events to a file? [(y)es/(n)o]");
-            logEventsResponse = keyboard.nextLine();
+            userResponse = keyboard.nextLine();
         }
-        while (!logEventsResponse.equalsIgnoreCase("yes") && !logEventsResponse.equalsIgnoreCase("no") && !logEventsResponse.equalsIgnoreCase("y") && !logEventsResponse.equalsIgnoreCase("n"));
+        while (!userResponse.equalsIgnoreCase("yes")
+                && !userResponse.equalsIgnoreCase("no")
+                && !userResponse.equalsIgnoreCase("y")
+                && !userResponse.equalsIgnoreCase("n"));
 
-        return logEventsResponse.toLowerCase().charAt(0) == 'y';
+        return userResponse.toLowerCase().charAt(0) == 'y';
+    }
+
+
+    static String askWhatPagesToScrape(@NotNull Scanner keyboard)
+    {
+        String userResponse;
+        do
+        {
+            System.out.println("""
+                    Would you like to:
+                        Scrape [n]ew pages?
+                        Scrape [f]ailed pages?
+                        Scrape [p]ast pages?
+                        """);
+            userResponse = keyboard.nextLine();
+        }
+        while (!userResponse.equalsIgnoreCase("n")
+                && !userResponse.equalsIgnoreCase("f")
+                && !userResponse.equalsIgnoreCase("p"));
+        return userResponse;
+    }
+
+
+    static PrimaryFilter getPrimaryFilter(Scanner keyboard)
+    {
+        System.out.println("Enter the number of which way you'd like the pages to be filtered: ");
+
+        for (PrimaryFilter g : PrimaryFilter.values())
+        {
+            System.out.printf("[%d]: %s\n", g.ordinal(), g.getDisplayString());
+        }
+        int selection = keyboard.nextInt();
+
+        while (selection < 0 || selection > Genre.values().length)
+        {
+            System.out.println("Invalid selection. Try again. ");
+            selection = keyboard.nextInt();
+        }
+        keyboard.nextLine();
+        return PrimaryFilter.values()[selection];
+    }
+
+
+    static Genre getBookGenre(Scanner keyboard)
+    {
+        System.out.println("Enter the number of which genre would you like to get: ");
+
+        for (Genre g : Genre.values())
+        {
+            System.out.printf("[%d]: %s\n", g.ordinal(), g.getDisplayString());
+        }
+        int selection = keyboard.nextInt();
+
+        while (selection < 0 || selection > Genre.values().length)
+        {
+            System.out.println("Invalid selection. Try again. ");
+            selection = keyboard.nextInt();
+        }
+        keyboard.nextLine();
+        return Genre.values()[selection];
     }
     //endregion
 
 
-    //region Misc Utility Methods
+    //region Misc Algorithms and Utility Methods
     static void getNewAndUsedPrices(@NotNull PriceStructure respBook, @NotNull String priceString)
     {
         if (priceString.contains(" - "))
@@ -776,46 +826,6 @@ public class ThriftBooks_DataScraper
         book.buttonName = returnBook.buttonName;
     }
 
-
-    static PrimaryFilter getPrimaryFilter(Scanner keyboard)
-    {
-        System.out.println("Enter the number of which way you'd like the pages to be filtered: ");
-
-        for (PrimaryFilter g : PrimaryFilter.values())
-        {
-            System.out.printf("[%d]: %s\n", g.ordinal(), g.getDisplayString());
-        }
-        int selection = keyboard.nextInt();
-
-        while (selection < 0 || selection > Genre.values().length)
-        {
-            System.out.println("Invalid selection. Try again. ");
-            selection = keyboard.nextInt();
-        }
-        keyboard.nextLine();
-        return PrimaryFilter.values()[selection];
-    }
-
-
-    static Genre getBookGenre(Scanner keyboard)
-    {
-        System.out.println("Enter the number of which genre would you like to get: ");
-
-        for (Genre g : Genre.values())
-        {
-            System.out.printf("[%d]: %s\n", g.ordinal(), g.getDisplayString());
-        }
-        int selection = keyboard.nextInt();
-
-        while (selection < 0 || selection > Genre.values().length)
-        {
-            System.out.println("Invalid selection. Try again. ");
-            selection = keyboard.nextInt();
-        }
-        keyboard.nextLine();
-        return Genre.values()[selection];
-    }
-
     
     static @NotNull WebDriver getFFXDriver()
     {
@@ -825,6 +835,65 @@ public class ThriftBooks_DataScraper
         ffxOptions.setCapability(FirefoxDriver.PROFILE, profile);
         ffxOptions.setHeadless(true);
         return new FirefoxDriver(ffxOptions);
+    }
+
+
+    static @NotNull String getFormattedDurationString(int duration)
+    {
+        int millis = 0, seconds = 0, minutes = 0, hours = 0, days = 0;
+        String timeString = "";
+
+        if (duration > 1000)
+        {
+            millis = (duration % 1000);
+            seconds = (duration / 1000);
+        }
+
+        if (seconds > 60)
+        {
+            minutes = seconds / 60;
+            seconds = seconds % 60;
+        }
+        if (minutes > 60)
+        {
+            hours = minutes / 60;
+            minutes = minutes % 60;
+        }
+        if (duration > 24)
+        {
+            days = hours / 24;
+            hours = hours / 24;
+        }
+
+        if (days > 0)
+        {
+            timeString += String.format("%d days, ", days);
+        }
+        if (hours > 0)
+        {
+            timeString += String.format("%d hours, ", hours);
+        }
+        if (minutes > 0)
+        {
+            timeString += String.format("%d minutes ", minutes);
+        }
+
+        timeString += String.format("%d.%d seconds", seconds, millis);
+
+        return timeString;
+    }
+
+
+    @Contract(pure = true)
+    static long getAverageTime(long @NotNull [] averageTimes)
+    {
+        long sum = 0;
+        for (long time : averageTimes)
+        {
+            sum += time;
+        }
+        return sum / averageTimes.length;
+
     }
     //endregion
 }
