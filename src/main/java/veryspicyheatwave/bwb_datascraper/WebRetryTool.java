@@ -11,13 +11,13 @@ import static veryspicyheatwave.bwb_datascraper.ThriftBooks_DataScraper.eventLog
 
 public final class WebRetryTool
 {
-    static List<WebElement> performWebActionWithRetries(WebTaskDoer taskDoer, String taskDescription) throws InterruptedException, RuntimeException
+    static List<WebElement> performWebActionWithRetries(WebTaskDoer taskDoer, String taskDescription, int numRetries) throws InterruptedException, RuntimeException
     {
         String failString = "Error: Exception while trying to " + taskDescription;
         int retryTimer = 0;
         int tryCount;
         List<WebElement> resp = null;
-        for (tryCount = 1; tryCount <= 4; tryCount++)
+        for (tryCount = 1; tryCount <= numRetries; tryCount++)
         {
             try
             {

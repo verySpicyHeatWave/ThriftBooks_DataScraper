@@ -83,7 +83,8 @@ public class ThriftBooks_DataScraper
         eventLogEntry("CSV file generated");
 
         keyboard.close();
-        long startTime = System.nanoTime();
+        long startTime = System.currentTimeMillis();
+        System.out.println(startTime);
 
         if (scrapeMode.equalsIgnoreCase("n"))
             scrapeBookPages(getListOfBookURLs(firstPage, lastPage));
@@ -94,8 +95,8 @@ public class ThriftBooks_DataScraper
         else if (scrapeMode.equalsIgnoreCase("p"))
             scrapeBookPages(getListOfURLsFromFile(new File(URL_FILE)));
 
-        long endTime = System.nanoTime();
-        long duration = (endTime - startTime) / 1000000;
+        long endTime = System.currentTimeMillis();
+        long duration = endTime - startTime;
 
         eventLogEntry("Full job complete in " + getFormattedDurationString((int)duration));
         eventLogEntry("Average of " + getFormattedDurationString((int)getAverageTime(averageTimes)) + " per book");
@@ -121,24 +122,24 @@ public class ThriftBooks_DataScraper
                 performWebActionWithRetries(() -> {
                     driver.get("about:blank");
                     return new ArrayList<>();
-                }, "load a blank page");
+                }, "load a blank page", 4);
                 Thread.sleep(666);
 
                 performWebActionWithRetries(() -> {
                     driver.get(pageURL);
                     return new ArrayList<>();
-                }, "load the URL for catalog page " + pageNo);
+                }, "load the URL for catalog page " + pageNo, 4);
                 Thread.sleep(2000);
 
                 WebElement searchContainer = performWebActionWithRetries(() -> {
                     String xpathExpression = "/html/body/div[4]/div/div[2]/div/div[2]/div/div/div/div/div[2]/div[2]/div[1]/div/div[1]";
                     return listGetterXPath(driver, wait, xpathExpression, true);
-                }, "collect catalog page " + pageNo + "'s search results").get(0);
+                }, "collect catalog page " + pageNo + "'s search results", 4).get(0);
 
                 List<WebElement> books = performWebActionWithRetries(() -> {
                     String tagName = "a";
                     return listGetterTagName(searchContainer, wait, tagName, false);
-                }, "find the books in the search results container");
+                }, "find the books in the search results container",4);
 
                 for (WebElement book : books)
                 {
@@ -167,7 +168,6 @@ public class ThriftBooks_DataScraper
         eventLogEntry("Successfully retrieved " + listOfBookURLs.size() + " book links from " + (lastPage - firstPage + 1) + " pages");
         driver.quit();
         eventLogEntry("WebDriver instance successfully closed");
-        averageTimes = new long[listOfBookURLs.size()];
         return listOfBookURLs;
     }
 
@@ -179,6 +179,7 @@ public class ThriftBooks_DataScraper
         Wait<WebDriver> wait = new WebDriverWait(driver, 4);
         int bookSuccesses = 0, bookFailures = 0, bookDuplicates = 0;
         int avgIndex = 0;
+        averageTimes = new long[listOfBookURLs.size()];
 
         for (String bookURL : listOfBookURLs)
         {
@@ -190,22 +191,28 @@ public class ThriftBooks_DataScraper
                 performWebActionWithRetries(() -> {
                     driver.get(bookURL);
                     return new ArrayList<>();
-                    }, "load book number " + listOfBookURLs.indexOf(bookURL) + " book URL");
+                    }, "load book number " + listOfBookURLs.indexOf(bookURL) + " book URL", 4);
                 Thread.sleep(400);
                 parseTitleAuthor(driver.getTitle(), book);
 
                 WebElement pageContents = performWebActionWithRetries(() -> {
                     String xpathExpression = "//div[@class='Content']";
                     return listGetterXPath(driver, wait, xpathExpression, true);
-                }, "build a list of all of the book page contents").get(0);
+                }, "build a list of all of the book page contents", 4).get(0);
                 book.genre = parseGenreString(pageContents, wait);
 
                 WebElement titleBlock = performWebActionWithRetries(() -> {
                     String xpathExpression = "//h1[@class='WorkMeta-title Alternative Alternative-title']";
                     return listGetterXPath(driver, wait, xpathExpression, true);
-                }, "locate and parse the title block").get(0);
+                }, "locate and parse the title block", 4).get(0);
                 if (titleBlock.getText() != null)
                     book.title = titleBlock.getText();
+
+                WebElement table = performWebActionWithRetries(() -> {
+                    String xpathExpression = "//div[@class='WorkMeta-details is-collapsed']";
+                    return listGetterXPath(driver,wait,xpathExpression,true);
+                }, "find the paperback book data table", 4).get(0);
+                parseTableDetails(table, wait, book);
 
                 parseButtonContainer(driver, wait, book);
 
@@ -217,7 +224,8 @@ public class ThriftBooks_DataScraper
                         book.pageLength, book.language, book.link);
 
                 writeLineToCSV(dataEntry);
-                insertBookIntoSQLdb(dataEntry, 1 + listOfBookURLs.indexOf(bookURL));
+                insertBookIntoSQLdb(dataEntry);
+                eventLogEntry(String.format("Successfully added book number %,d titled \"%s\" to the SQL database", (1 + listOfBookURLs.indexOf(bookURL)), book.title));
 
                 if (!(book.paperbackImageLink == null))
                     downloadImageFromURL(book.paperbackImageLink,book.title,"01");
@@ -236,7 +244,7 @@ public class ThriftBooks_DataScraper
                 e.printStackTrace(new PrintWriter(sw));
                 eventLogEntry(sw.toString());
                 sw.close();
-                if (e.getMessage().contains("Duplicate entry") && !e.getMessage().contains("'null'"))
+                if (!(e.getMessage().contains("null")) && e.getMessage().contains("Duplicate entry"))
                 {
                     bookDuplicates++;
                 }
@@ -284,19 +292,19 @@ public class ThriftBooks_DataScraper
         WebElement buttonContainer = performWebActionWithRetries(() -> {
             String xpathExpression = "//div[@class='WorkSelector-row WorkSelector-td-height']";
             return listGetterXPath(driver, wait, xpathExpression, true);
-        }, "locate the button container").get(0);
+        }, "locate the button container", 4).get(0);
 
         List<WebElement> buttons = performWebActionWithRetries(() -> {
             String tagName = "button";
             return listGetterTagName(buttonContainer, wait, tagName, false);
-        }, "get the list of book binding buttons");
+        }, "get the list of book binding buttons", 4);
 
         for (WebElement button : buttons)
         {
             List<WebElement> buttDetails = performWebActionWithRetries(() -> {
                 String xpathExpression = "./child::div";
                 return listGetterXPath(button,wait,xpathExpression,false);
-            }, "get the button details for a given button");
+            }, "get the button details for a given button", 4);
             for (WebElement buttDetail : buttDetails)
             {
                 if (buttDetail.getText().equalsIgnoreCase("paperback"))
@@ -305,12 +313,12 @@ public class ThriftBooks_DataScraper
                         JavascriptExecutor js = (JavascriptExecutor)driver;
                         js.executeScript("arguments[0].click();", button);
                         return new ArrayList<>();
-                    }, "click the paperback filter button");
+                    }, "click the paperback filter button", 4);
 
                     WebElement priceRangeElement = performWebActionWithRetries(() -> {
                         String xpathExpression = "./following-sibling::div[@class='']//span";
                         return listGetterXPath(buttDetail,wait,xpathExpression,true);
-                    }, "identify the paperback price range").get(0);
+                    }, "identify the paperback price range", 4).get(0);
                     if (priceRangeElement.getText().contains("$"))
                     {
                         getNewAndUsedPrices(book.paperbackPrices, priceRangeElement.getText());
@@ -319,17 +327,13 @@ public class ThriftBooks_DataScraper
                     WebElement image = performWebActionWithRetries(() -> {
                         String xpathExpression = "//img[@itemprop='image']";
                         return listGetterXPath(driver,wait,xpathExpression,true);
-                    }, "store the paperback image link").get(0);
+                    }, "store the paperback image link", 4).get(0);
                     book.paperbackImageLink = image.getAttribute("src");
-
-                   WebElement table = performWebActionWithRetries(() -> {
-                       String xpathExpression = "//div[@class='WorkMeta-details is-collapsed']";
-                       return listGetterXPath(driver,wait,xpathExpression,true);
-                   }, "find the paperback book data table").get(0);
-                    parseTableDetails(table, wait, book);
 
                     continue;
                 }
+
+
 
                 if (buttDetail.getText().equalsIgnoreCase("mass market paperback"))
                 {
@@ -337,12 +341,12 @@ public class ThriftBooks_DataScraper
                         JavascriptExecutor js = (JavascriptExecutor)driver;
                         js.executeScript("arguments[0].click();", button);
                         return new ArrayList<>();
-                    }, "click the mass market paperback filter button");
+                    }, "click the mass market paperback filter button", 4);
 
                     WebElement priceRangeElement = performWebActionWithRetries(() -> {
                         String xpathExpression = "./following-sibling::div[@class='']//span";
                         return listGetterXPath(buttDetail,wait,xpathExpression,true);
-                    }, "identify the mass market paperback price range").get(0);
+                    }, "identify the mass market paperback price range", 4).get(0);
                     if (priceRangeElement.getText().contains("$"))
                     {
                         getNewAndUsedPrices(book.massMarketPrices, priceRangeElement.getText());
@@ -351,7 +355,7 @@ public class ThriftBooks_DataScraper
                     WebElement image = performWebActionWithRetries(() -> {
                         String xpathExpression = "//img[@itemprop='image']";
                         return listGetterXPath(driver,wait,xpathExpression,true);
-                    }, "store the mass market paperback image link").get(0);
+                    }, "store the mass market paperback image link", 4).get(0);
                     book.massImageLink = image.getAttribute("src");
 
                     continue;
@@ -362,7 +366,7 @@ public class ThriftBooks_DataScraper
                     WebElement priceRangeElement = performWebActionWithRetries(() -> {
                         String xpathExpression = "./following-sibling::div[@class='']//span";
                         return listGetterXPath(buttDetail,wait,xpathExpression,true);
-                    }, "identify the hardcover price range").get(0);
+                    }, "identify the hardcover price range", 4).get(0);
                     if (priceRangeElement.getText().contains("$"))
                     {
                         getNewAndUsedPrices(book.hardcoverPrices, priceRangeElement.getText());
@@ -379,7 +383,7 @@ public class ThriftBooks_DataScraper
         List<WebElement> elements = performWebActionWithRetries(() -> {
             String tagName = "span";
             return listGetterTagName(table,wait,tagName,false);
-        }, "get the book details from the lower table");
+        }, "get the book details from the lower table", 4);
         int index = -1;
 
         for (WebElement detail : elements)
@@ -430,7 +434,7 @@ public class ThriftBooks_DataScraper
         List<WebElement> spans = performWebActionWithRetries(() -> {
             String tagName = "span";
             return listGetterTagName(pageContents,wait,tagName,false);
-        }, "find the genre element at the top of the page");
+        }, "find the genre element at the top of the page", 4);
 
         for (WebElement span : spans)
         {
@@ -463,7 +467,7 @@ public class ThriftBooks_DataScraper
 
 
     //region SQL Methods
-    static void insertBookIntoSQLdb(String csvStr, int bookNo) throws FileNotFoundException, ClassNotFoundException, SQLException
+    static void insertBookIntoSQLdb(String csvStr) throws FileNotFoundException, ClassNotFoundException, SQLException
     {
         Class.forName("com.mysql.cj.jdbc.Driver");
         String pwSQL = getSQLPassword();
@@ -477,7 +481,6 @@ public class ThriftBooks_DataScraper
                     "jdbc:mysql://localhost:3306/thriftBooksDB", "root", pwSQL);
             Statement statement = con.createStatement();
             statement.execute(insertionQuery);
-            eventLogEntry("Book " + bookNo + " Successfully added to SQL table");
             con.close();
         } catch (SQLException sqlE)
         {
@@ -624,6 +627,10 @@ public class ThriftBooks_DataScraper
             failURLs.add(readFileScan.nextLine());
         }
         readFileScan.close();
+        if (readFile.equals(new File(FAIL_FILE)))
+            if (readFile.delete())
+                System.out.println("Deleted original fail file before proceeding");
+
         return failURLs;
     }
     //endregion
@@ -632,33 +639,29 @@ public class ThriftBooks_DataScraper
     //region User Interaction Methods
     static int getFirstOrLastPage(Scanner keyboard, @NotNull String page)
     {
+        String introStr, errorStr;
         int resp;
         if (page.equalsIgnoreCase("first"))
         {
-            do
-            {
-                System.out.println("Enter the first page you want to read, or enter 0 to exit: ");
-                resp = keyboard.nextInt();
-                if (resp < 0)
-                    System.out.println("\t**ERROR: First page number must be at least 1");
-            }
-            while (resp < 0);
-        }
-        else if (page.equalsIgnoreCase("last"))
-        {
-            do
-            {
-                System.out.println("Enter the last page you want to read: ");
-                resp = keyboard.nextInt();
-                if (resp < 0)
-                    System.out.println("\t**ERROR: Last page number must be at least 1");
-            }
-            while (resp < 0);
+            introStr = "Enter the first page you want to read, or enter 0 to exit: ";
+            errorStr = "First";
         }
         else
         {
-            resp = 1;
+            introStr = "Enter the last page you want to read: ";
+            errorStr = "Last";
         }
+        do
+        {
+            System.out.println(introStr);
+            resp = keyboard.nextInt();
+            if (resp < 0)
+                System.out.println("\t**ERROR: " + errorStr + " page number must be at least 1");
+            else if (resp > 333)
+                System.out.println("\t**ERROR: " + errorStr + " page number cannot be more than 333");
+        }
+        while (resp < 0 || resp > 333);
+
         keyboard.nextLine();
         return resp;
     }
@@ -711,7 +714,7 @@ public class ThriftBooks_DataScraper
         }
         int selection = keyboard.nextInt();
 
-        while (selection < 0 || selection > Genre.values().length)
+        while (selection < 0 || selection > PrimaryFilter.values().length)
         {
             System.out.println("Invalid selection. Try again. ");
             selection = keyboard.nextInt();
@@ -845,8 +848,8 @@ public class ThriftBooks_DataScraper
 
         if (duration > 1000)
         {
-            millis = (duration % 1000);
             seconds = (duration / 1000);
+            millis = (duration % 1000);
         }
 
         if (seconds > 60)
@@ -859,10 +862,10 @@ public class ThriftBooks_DataScraper
             hours = minutes / 60;
             minutes = minutes % 60;
         }
-        if (duration > 24)
+        if (hours > 24)
         {
             days = hours / 24;
-            hours = hours / 24;
+            hours = hours % 24;
         }
 
         if (days > 0)

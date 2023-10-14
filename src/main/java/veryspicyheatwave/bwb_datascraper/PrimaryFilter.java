@@ -3,6 +3,7 @@ package veryspicyheatwave.bwb_datascraper;
 public enum PrimaryFilter
 {
     MOST_POPULAR("/browse/?b.search=#b.s=mostPopular-desc&b.p=", "Most Popular"),
+    TOP_MATCHES("/browse/?b.search=#b.s=topMatches-desc&b.p=", "Top Matches"),
     BEST_SELLER("/browse/?b.search=#b.s=bestsellers-desc&b.p=", "Best Selling");
 
     private final String filterString;
