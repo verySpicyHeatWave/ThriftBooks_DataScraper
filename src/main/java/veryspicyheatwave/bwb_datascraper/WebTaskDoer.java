@@ -6,5 +6,5 @@ import java.util.List;
 
 public interface WebTaskDoer
 {
-    List<WebElement> doTask();
+    List<WebElement> doTask() throws InterruptedException;
 }

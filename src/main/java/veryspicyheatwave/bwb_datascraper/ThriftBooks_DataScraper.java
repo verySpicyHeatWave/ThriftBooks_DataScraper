@@ -1,5 +1,16 @@
 package veryspicyheatwave.bwb_datascraper;
 
+import org.jetbrains.annotations.Contract;
+import org.jetbrains.annotations.NotNull;
+import org.openqa.selenium.*;
+import org.openqa.selenium.firefox.FirefoxDriver;
+import org.openqa.selenium.firefox.FirefoxOptions;
+import org.openqa.selenium.firefox.FirefoxProfile;
+import org.openqa.selenium.support.ui.Wait;
+import org.openqa.selenium.support.ui.WebDriverWait;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.io.*;
 import java.net.URI;
 import java.net.URISyntaxException;
@@ -7,24 +18,18 @@ import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.sql.*;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.SQLException;
+import java.sql.Statement;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.*;
+import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
-
-import org.jetbrains.annotations.Contract;
-import org.jetbrains.annotations.NotNull;
-
-import org.openqa.selenium.*;
-import org.openqa.selenium.firefox.FirefoxDriver;
-import org.openqa.selenium.firefox.FirefoxOptions;
-import org.openqa.selenium.firefox.FirefoxProfile;
-import org.openqa.selenium.support.ui.Wait;
-import org.openqa.selenium.support.ui.WebDriverWait;
+import java.util.Scanner;
 
 import static veryspicyheatwave.bwb_datascraper.WebRetryTool.*;
 
@@ -50,11 +55,8 @@ public class ThriftBooks_DataScraper
     {
         printBanner();
         Scanner keyboard = new Scanner(System.in);
-        int firstPage = 0, lastPage = 0;
+        int firstPage, lastPage;
 
-        String scrapeMode = askWhatPagesToScrape(keyboard);
-            if (scrapeMode.equalsIgnoreCase("n"))
-            {
                 do
                 {
                     firstPage = getFirstOrLastPage(keyboard, "first");
@@ -72,7 +74,6 @@ public class ThriftBooks_DataScraper
                 filterPrimary = getPrimaryFilter(keyboard);
                 filterGenre = getBookGenre(keyboard);
                 eventLogEntry("User selected catalog pages " + firstPage + " to " + lastPage + " filtering by the " + filterPrimary.getDisplayString() + " " + filterGenre.getDisplayString() + " books");
-        }
 
         loggingEvents = askIfUserWantsToLog(keyboard);
         if (loggingEvents)
@@ -86,14 +87,7 @@ public class ThriftBooks_DataScraper
         long startTime = System.currentTimeMillis();
         System.out.println(startTime);
 
-        if (scrapeMode.equalsIgnoreCase("n"))
             scrapeBookPages(getListOfBookURLs(firstPage, lastPage));
-
-        else if (scrapeMode.equalsIgnoreCase("f"))
-            scrapeBookPages(getListOfURLsFromFile(new File(FAIL_FILE)));
-
-        else if (scrapeMode.equalsIgnoreCase("p"))
-            scrapeBookPages(getListOfURLsFromFile(new File(URL_FILE)));
 
         long endTime = System.currentTimeMillis();
         long duration = endTime - startTime;
@@ -122,13 +116,13 @@ public class ThriftBooks_DataScraper
                 performWebActionWithRetries(() -> {
                     driver.get("about:blank");
                     return new ArrayList<>();
-                }, "load a blank page", 4);
+                }, "load a blank page", 2);
                 Thread.sleep(666);
 
                 performWebActionWithRetries(() -> {
                     driver.get(pageURL);
                     return new ArrayList<>();
-                }, "load the URL for catalog page " + pageNo, 4);
+                }, "load the URL for catalog page " + pageNo, 3);
                 Thread.sleep(2000);
 
                 WebElement searchContainer = performWebActionWithRetries(() -> {
@@ -139,7 +133,7 @@ public class ThriftBooks_DataScraper
                 List<WebElement> books = performWebActionWithRetries(() -> {
                     String tagName = "a";
                     return listGetterTagName(searchContainer, wait, tagName, false);
-                }, "find the books in the search results container",4);
+                }, "find the books in the search results container", 4);
 
                 for (WebElement book : books)
                 {
@@ -191,7 +185,7 @@ public class ThriftBooks_DataScraper
                 performWebActionWithRetries(() -> {
                     driver.get(bookURL);
                     return new ArrayList<>();
-                    }, "load book number " + listOfBookURLs.indexOf(bookURL) + " book URL", 4);
+                    }, "load book number " + listOfBookURLs.indexOf(bookURL) + " book URL", 3);
                 Thread.sleep(400);
                 parseTitleAuthor(driver.getTitle(), book);
 
@@ -204,24 +198,24 @@ public class ThriftBooks_DataScraper
                 WebElement titleBlock = performWebActionWithRetries(() -> {
                     String xpathExpression = "//h1[@class='WorkMeta-title Alternative Alternative-title']";
                     return listGetterXPath(driver, wait, xpathExpression, true);
-                }, "locate and parse the title block", 4).get(0);
+                }, "locate and parse the title block", 3).get(0);
                 if (titleBlock.getText() != null)
                     book.title = titleBlock.getText();
 
-                WebElement table = performWebActionWithRetries(() -> {
-                    String xpathExpression = "//div[@class='WorkMeta-details is-collapsed']";
+                WebElement image = performWebActionWithRetries(() -> {
+                    String xpathExpression = "//img[@itemprop='image']";
                     return listGetterXPath(driver,wait,xpathExpression,true);
-                }, "find the paperback book data table", 4).get(0);
-                parseTableDetails(table, wait, book);
+                }, "store the image link", 4).get(0);
+                book.paperbackImageLink = image.getAttribute("src");
 
                 parseButtonContainer(driver, wait, book);
 
                 SimpleDateFormat formatter = new SimpleDateFormat("yyyy-MM-dd");
 
-                String dataEntry = String.format("'%s','%s',%.2f,%.2f,'%s','%s','%s','%s',%d,'%s','%s'",
+                String dataEntry = String.format("'%s','%s',%.2f,%.2f,'%s','%s','%s','%s',%d,'%s'",
                         book.title.replace("'", "\\'"), book.author.replace("'", "\\'"), book.usedPrice, book.newPrice, book.genre.replace("'", "\\'"),
                         book.format, book.isbnCode, formatter.format(book.releaseDate),
-                        book.pageLength, book.language, book.link);
+                        book.pageLength, book.link);
 
                 writeLineToCSV(dataEntry);
                 insertBookIntoSQLdb(dataEntry);
@@ -287,103 +281,74 @@ public class ThriftBooks_DataScraper
     }
 
 
-    static void parseButtonContainer(@NotNull WebDriver driver, Wait<WebDriver> wait, BookEntry book) throws InterruptedException, StaleElementReferenceException, TimeoutException
-    {
+    static void parseButtonContainer(@NotNull WebDriver driver, Wait<WebDriver> wait, BookEntry book) throws InterruptedException, StaleElementReferenceException, TimeoutException, ParseException {
+
+       ArrayList<BookDetails> bookDeets = new ArrayList<>();
         WebElement buttonContainer = performWebActionWithRetries(() -> {
             String xpathExpression = "//div[@class='WorkSelector-row WorkSelector-td-height']";
             return listGetterXPath(driver, wait, xpathExpression, true);
-        }, "locate the button container", 4).get(0);
+        }, "locate the button container", 3).get(0);
 
         List<WebElement> buttons = performWebActionWithRetries(() -> {
             String tagName = "button";
             return listGetterTagName(buttonContainer, wait, tagName, false);
-        }, "get the list of book binding buttons", 4);
+        }, "get the list of book binding buttons", 3);
 
         for (WebElement button : buttons)
         {
+            BookDetails tempBookDeets = new BookDetails();
             List<WebElement> buttDetails = performWebActionWithRetries(() -> {
                 String xpathExpression = "./child::div";
                 return listGetterXPath(button,wait,xpathExpression,false);
-            }, "get the button details for a given button", 4);
+            }, "get the button details for a given button", 3);
+
             for (WebElement buttDetail : buttDetails)
             {
-                if (buttDetail.getText().equalsIgnoreCase("paperback"))
-                {
-                    performWebActionWithRetries(() -> {
-                        JavascriptExecutor js = (JavascriptExecutor)driver;
-                        js.executeScript("arguments[0].click();", button);
-                        return new ArrayList<>();
-                    }, "click the paperback filter button", 4);
-
-                    WebElement priceRangeElement = performWebActionWithRetries(() -> {
-                        String xpathExpression = "./following-sibling::div[@class='']//span";
-                        return listGetterXPath(buttDetail,wait,xpathExpression,true);
-                    }, "identify the paperback price range", 4).get(0);
-                    if (priceRangeElement.getText().contains("$"))
-                    {
-                        getNewAndUsedPrices(book.paperbackPrices, priceRangeElement.getText());
-                    }
-
-                    WebElement image = performWebActionWithRetries(() -> {
-                        String xpathExpression = "//img[@itemprop='image']";
-                        return listGetterXPath(driver,wait,xpathExpression,true);
-                    }, "store the paperback image link", 4).get(0);
-                    book.paperbackImageLink = image.getAttribute("src");
-
+                if (buttDetail.getText().toLowerCase().contains("paperback"))
+                    tempBookDeets.buttonName = "Paperback";
+                else if (buttDetail.getText().toLowerCase().contains("hardcover"))
+                    tempBookDeets.buttonName = "Hardcover";
+                else
                     continue;
-                }
 
-
-
-                if (buttDetail.getText().equalsIgnoreCase("mass market paperback"))
+                WebElement priceRangeElement = performWebActionWithRetries(() -> {
+                    String xpathExpression = "./following-sibling::div[@class='']//span";
+                    return listGetterXPath(buttDetail,wait,xpathExpression,true);
+                }, "identify the " + tempBookDeets.buttonName + " price range", 3).get(0);
+                if (priceRangeElement.getText().contains("$"))
                 {
-                    performWebActionWithRetries(() -> {
-                        JavascriptExecutor js = (JavascriptExecutor)driver;
-                        js.executeScript("arguments[0].click();", button);
-                        return new ArrayList<>();
-                    }, "click the mass market paperback filter button", 4);
-
-                    WebElement priceRangeElement = performWebActionWithRetries(() -> {
-                        String xpathExpression = "./following-sibling::div[@class='']//span";
-                        return listGetterXPath(buttDetail,wait,xpathExpression,true);
-                    }, "identify the mass market paperback price range", 4).get(0);
-                    if (priceRangeElement.getText().contains("$"))
-                    {
-                        getNewAndUsedPrices(book.massMarketPrices, priceRangeElement.getText());
-                    }
-
-                    WebElement image = performWebActionWithRetries(() -> {
-                        String xpathExpression = "//img[@itemprop='image']";
-                        return listGetterXPath(driver,wait,xpathExpression,true);
-                    }, "store the mass market paperback image link", 4).get(0);
-                    book.massImageLink = image.getAttribute("src");
-
-                    continue;
+                    getNewAndUsedPrices(tempBookDeets, priceRangeElement.getText());
                 }
-
-                if (buttDetail.getText().equalsIgnoreCase("hardcover"))
-                {
-                    WebElement priceRangeElement = performWebActionWithRetries(() -> {
-                        String xpathExpression = "./following-sibling::div[@class='']//span";
-                        return listGetterXPath(buttDetail,wait,xpathExpression,true);
-                    }, "identify the hardcover price range", 4).get(0);
-                    if (priceRangeElement.getText().contains("$"))
-                    {
-                        getNewAndUsedPrices(book.hardcoverPrices, priceRangeElement.getText());
-                    }
-                }
+                break;
             }
+
+            performWebActionWithRetries(() -> {
+                JavascriptExecutor js = (JavascriptExecutor)driver;
+                js.executeScript("arguments[0].click();", button);
+                return new ArrayList<>();
+            }, "click the " + tempBookDeets.buttonName + " button", 3);
+
+            WebElement table = performWebActionWithRetries(() -> {
+                String xpathExpression = "//div[@class='WorkMeta-details is-collapsed']";
+                return listGetterXPath(driver,wait,xpathExpression,true);
+            }, "find the " + tempBookDeets.buttonName + " book data table", 3).get(0);
+
+            performWebActionWithRetries(() -> {
+                parseTableDetails(table, wait, tempBookDeets);
+                return new ArrayList<>();
+            }, "parse " + tempBookDeets.buttonName + " table details", 3);
+
+            parseTableDetails(table, wait, tempBookDeets);
+
+            bookDeets.add(tempBookDeets);
         }
-        determineBestPriceSet(book);
+        book.takeBookDetails(determineBestPriceSet(bookDeets));
     }
 
 
-    static void parseTableDetails(@NotNull WebElement table, Wait<WebDriver> wait, BookEntry book) throws StaleElementReferenceException, TimeoutException, InterruptedException
+    static void parseTableDetails(@NotNull WebElement table, Wait<WebDriver> wait, BookDetails book) throws StaleElementReferenceException, TimeoutException
     {
-        List<WebElement> elements = performWebActionWithRetries(() -> {
-            String tagName = "span";
-            return listGetterTagName(table,wait,tagName,false);
-        }, "get the book details from the lower table", 4);
+        List<WebElement> elements = listGetterTagName(table,wait,"span",false);
         int index = -1;
 
         for (WebElement detail : elements)
@@ -415,12 +380,6 @@ public class ThriftBooks_DataScraper
                 }
             }
 
-            if (detail.getText().toLowerCase().contains("language"))
-            {
-                book.language = elements.get(index + 1).getText();
-                continue;
-            }
-
             if (detail.getAttribute("itemprop") != null && book.genre == null && detail.getAttribute("itemprop").toLowerCase().contains("name"))
             {
                 book.genre = detail.getText();
@@ -434,7 +393,7 @@ public class ThriftBooks_DataScraper
         List<WebElement> spans = performWebActionWithRetries(() -> {
             String tagName = "span";
             return listGetterTagName(pageContents,wait,tagName,false);
-        }, "find the genre element at the top of the page", 4);
+        }, "find the genre element at the top of the page", 3);
 
         for (WebElement span : spans)
         {
@@ -474,7 +433,7 @@ public class ThriftBooks_DataScraper
         Connection con = null;
         try
         {
-            String insertionQuery = "INSERT INTO books(title,author,used_price,new_price,genre,binding_type,isbn_code,release_date,page_length,language,bookURL) VALUES";
+            String insertionQuery = "INSERT INTO books(title,author,used_price,new_price,genre,binding_type,isbn_code,release_date,page_length,bookURL) VALUES";
             insertionQuery += "(" + csvStr + ");";
 
             con = DriverManager.getConnection(
@@ -610,29 +569,6 @@ public class ThriftBooks_DataScraper
             eventLogEntry("Error while creating image file: " + e.getMessage());
         }
     }
-
-
-    static @NotNull ArrayList<String> getListOfURLsFromFile(@NotNull File readFile) throws FileNotFoundException
-    {
-        if (!readFile.exists())
-        {
-            eventLogEntry(readFile + " does not exist! No pages will be scraped");
-            return new ArrayList<>();
-        }
-        Scanner readFileScan = new Scanner(readFile);
-        ArrayList<String> failURLs = new ArrayList<>();
-
-        while (readFileScan.hasNext())
-        {
-            failURLs.add(readFileScan.nextLine());
-        }
-        readFileScan.close();
-        if (readFile.equals(new File(FAIL_FILE)))
-            if (readFile.delete())
-                System.out.println("Deleted original fail file before proceeding");
-
-        return failURLs;
-    }
     //endregion
 
 
@@ -684,26 +620,6 @@ public class ThriftBooks_DataScraper
     }
 
 
-    static String askWhatPagesToScrape(@NotNull Scanner keyboard)
-    {
-        String userResponse;
-        do
-        {
-            System.out.println("""
-                    Would you like to:
-                        Scrape [n]ew pages?
-                        Scrape [f]ailed pages?
-                        Scrape [p]ast pages?
-                        """);
-            userResponse = keyboard.nextLine();
-        }
-        while (!userResponse.equalsIgnoreCase("n")
-                && !userResponse.equalsIgnoreCase("f")
-                && !userResponse.equalsIgnoreCase("p"));
-        return userResponse;
-    }
-
-
     static PrimaryFilter getPrimaryFilter(Scanner keyboard)
     {
         System.out.println("Enter the number of which way you'd like the pages to be filtered: ");
@@ -746,7 +662,7 @@ public class ThriftBooks_DataScraper
 
 
     //region Misc Algorithms and Utility Methods
-    static void getNewAndUsedPrices(@NotNull PriceStructure respBook, @NotNull String priceString)
+    static void getNewAndUsedPrices(@NotNull BookDetails respBook, @NotNull String priceString)
     {
         if (priceString.contains(" - "))
         {
@@ -774,67 +690,63 @@ public class ThriftBooks_DataScraper
     }
 
 
-    static void determineBestPriceSet(@NotNull BookEntry book)
-    {
-        ArrayList<PriceStructure> priceLists = new ArrayList<>();
-        boolean[] removeIndices = {false, false, false};
-        priceLists.add(book.paperbackPrices);
-        priceLists.add(book.massMarketPrices);
-        priceLists.add(book.hardcoverPrices);
+    static BookDetails determineBestPriceSet(@NotNull ArrayList<BookDetails> bookDeets) throws ParseException {
+        boolean[] removeIndices = new boolean[bookDeets.size()];
+        BookDetails tempBookDeets = bookDeets.get(0);
 
-        for (int i = 0; i <= priceLists.size() - 1; i++)
+        for (int i = 0; i < bookDeets.size(); i++)
         {
-            if (priceLists.get(i).newPrice <= 0)
-            {
+            if (bookDeets.get(i).newPrice <= 0)
                 removeIndices[i] = true;
-            }
+
+            if (bookDeets.get(i).isbnCode.length() < 10)
+                removeIndices[i] = true;
+
+            if (bookDeets.get(i).pageLength < 5)
+                removeIndices[i] = true;
         }
 
-        for (int i = priceLists.size() - 1; i >= 0; i--)
+        for (int i = bookDeets.size() - 1; i >= 0; i--)
         {
-            if (removeIndices[i])
+            if (bookDeets.size() > 1)
             {
-                priceLists.remove(i);
+                if (removeIndices[i])
+                {
+                    bookDeets.remove(i);
+                }
             }
         }
 
-        if (priceLists.size() == 1)
+        if (bookDeets.size() == 1)
         {
-            book.newPrice = priceLists.get(0).newPrice;
-            book.usedPrice = priceLists.get(0).usedPrice;
-            book.format = priceLists.get(0).format;
-            return;
+            return bookDeets.get(0);
         }
 
-        PriceStructure returnBook = new PriceStructure("Undefined", "Undefined");
-        returnBook.newPrice = 1000000000;
-        returnBook.usedPrice = 1000000000;
+        BookDetails returnBookDeets = new BookDetails();
+        returnBookDeets.newPrice = 1000000000;
+        returnBookDeets.usedPrice = 1000000000;
 
-        for (int i = 0; i <= priceLists.size() - 1; i++)
+        for (int i = 0; i <= bookDeets.size() - 1; i++)
         {
-            if (priceLists.get(i).newPrice < returnBook.newPrice)
+            if (bookDeets.get(i).newPrice < returnBookDeets.newPrice)
             {
-                returnBook = priceLists.get(i);
+                returnBookDeets = bookDeets.get(i);
             }
         }
 
-        if (returnBook.usedPrice == 1000000000)
+        if (returnBookDeets.usedPrice == 1000000000)
         {
-            returnBook.usedPrice = 0;
-            returnBook.newPrice = 0;
+            returnBookDeets = tempBookDeets;
         }
-        book.newPrice = returnBook.newPrice;
-        book.usedPrice = returnBook.usedPrice;
-        book.format = returnBook.format;
-        book.buttonName = returnBook.buttonName;
+        return returnBookDeets;
     }
 
-    
+
     static @NotNull WebDriver getFFXDriver()
     {
         System.setProperty("webdriver.gecko.driver",GECKO_DRIVER);
         FirefoxOptions ffxOptions = new FirefoxOptions();
-        FirefoxProfile profile = new FirefoxProfile();        
+        FirefoxProfile profile = new FirefoxProfile();
         ffxOptions.setCapability(FirefoxDriver.PROFILE, profile);
         ffxOptions.setHeadless(true);
         return new FirefoxDriver(ffxOptions);

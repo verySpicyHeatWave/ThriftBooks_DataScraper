@@ -5,12 +5,14 @@
     <artifactId>ThriftBooks_DataScraper</artifactId>
     <version>1.0-SNAPSHOT</version>
     <packaging>jar</packaging>
+
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <maven.compiler.source>20</maven.compiler.source>
         <maven.compiler.target>20</maven.compiler.target>
         <exec.mainClass>veryspicyheatwave.bwb_datascraper.ThriftBooks_DataScraper</exec.mainClass>
     </properties>
+
     <pluginRepositories>
         <pluginRepository>
             <id>central</id>
@@ -25,6 +27,7 @@
             </releases>
         </pluginRepository>
     </pluginRepositories>
+
     <repositories>
         <repository>
             <id>central</id>
@@ -36,74 +39,58 @@
             </snapshots>
         </repository>
     </repositories>
+
     <dependencies>
-        <!--    <dependency>
-               <groupId>io.github.bonigarcia</groupId>
-               <artifactId>webdrivermanager</artifactId>
-               <version>5.0.3</version>
-           </dependency> -->
-        <dependency>
-               <!-- jsoup HTML parser library - Probably don't need this anymore, but I'll leave it for now...-->
-            <groupId>org.jsoup</groupId>
-            <artifactId>jsoup</artifactId>
-            <version>1.16.1</version>
-        </dependency>
-        <!-- Selenium dependencies -->
         <dependency>
         <!-- https://mvnrepository.com/artifact/org.seleniumhq.selenium/selenium-java -->
             <groupId>org.seleniumhq.selenium</groupId>
             <artifactId>selenium-java</artifactId>
             <version>3.141.59</version>
         </dependency>
+
         <dependency>
         <!-- https://mvnrepository.com/artifact/org.seleniumhq.selenium/selenium-api -->
             <groupId>org.seleniumhq.selenium</groupId>
             <artifactId>selenium-api</artifactId>
             <version>3.141.59</version>
         </dependency>
+
         <dependency>
-        <!-- https://mvnrepository.com/artifact/org.seleniumhq.selenium/selenium-server -->
-            <!--     <groupId>org.seleniumhq.selenium</groupId>
-                <artifactId>selenium-server</artifactId>
-                <version>3.141.59</version>
-            </dependency>
-            <dependency>  -->
             <!-- https://mvnrepository.com/artifact/org.seleniumhq.selenium/selenium-firefox-driver  -->
             <groupId>org.seleniumhq.selenium</groupId>
             <artifactId>selenium-firefox-driver</artifactId>
             <version>3.141.59</version>
             <type>jar</type>
         </dependency>
+
         <dependency>
         <!-- https://mvnrepository.com/artifact/org.seleniumhq.selenium/selenium-remote-driver -->
             <groupId>org.seleniumhq.selenium</groupId>
             <artifactId>selenium-remote-driver</artifactId>
             <version>3.141.59</version>
         </dependency>
+
         <dependency>
         <!-- https://mvnrepository.com/artifact/org.seleniumhq.selenium/selenium-support -->
             <groupId>org.seleniumhq.selenium</groupId>
             <artifactId>selenium-support</artifactId>
             <version>3.141.59</version>
         </dependency>
+
         <dependency>
-        <!-- https://mvnrepository.com/artifact/org.testng/testng -->
-            <!--     <groupId>org.testng</groupId>
-                <artifactId>testng</artifactId>
-                <version>7.8.0</version>
-            </dependency>
-            <dependency> -->
             <!-- https://mvnrepository.com/artifact/org.apache.poi/poi-ooxml -->
             <groupId>org.apache.poi</groupId>
             <artifactId>poi-ooxml</artifactId>
             <version>5.2.3</version>
         </dependency>
+
         <dependency>
         <!-- https://mvnrepository.com/artifact/org.apache.poi/poi-ooxml-schemas -->
             <groupId>org.apache.poi</groupId>
             <artifactId>poi-ooxml-schemas</artifactId>
             <version>4.1.2</version>
         </dependency>
+
         <dependency>
         <!-- https://mvnrepository.com/artifact/junit/junit -->
             <groupId>junit</groupId>
@@ -111,14 +98,16 @@
             <version>4.13.2</version>
             <type>jar</type>
         </dependency>
+
         <dependency>
             <!-- https://mvnrepository.com/artifact/com.google.guava/guava -->
             <groupId>com.google.guava</groupId>
             <artifactId>guava</artifactId>
             <version>32.1.2-jre</version>
         </dependency>
-        <!-- https://mvnrepository.com/artifact/com.mysql/mysql-connector-j -->
+
         <dependency>
+            <!-- https://mvnrepository.com/artifact/com.mysql/mysql-connector-j -->
             <groupId>com.mysql</groupId>
             <artifactId>mysql-connector-j</artifactId>
             <version>8.1.0</version>
@@ -129,16 +118,48 @@
             <artifactId>awaitility</artifactId>
             <version>3.0.0</version>
         </dependency>
+
         <dependency>
             <groupId>org.awaitility</groupId>
             <artifactId>awaitility-proxy</artifactId>
             <version>3.0.0</version>
         </dependency>
+
         <dependency>
             <groupId>org.jetbrains</groupId>
             <artifactId>annotations</artifactId>
             <version>RELEASE</version>
             <scope>compile</scope>
         </dependency>
+
+        <dependency>
+            <!-- https://mvnrepository.com/artifact/org.slf4j/slf4j-api -->
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+            <version>2.0.9</version>
+        </dependency>
+
+        <dependency>
+            <!-- https://mvnrepository.com/artifact/org.slf4j/slf4j-log4j12 -->
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-log4j12</artifactId>
+            <version>2.0.9</version>
+            <type>pom</type>
+        </dependency>
+
+        <dependency>
+            <!-- https://mvnrepository.com/artifact/org.apache.logging.log4j/log4j-core -->
+            <groupId>org.apache.logging.log4j</groupId>
+            <artifactId>log4j-core</artifactId>
+            <version>2.20.0</version>
+        </dependency>
+
+        <dependency>
+            <!-- https://mvnrepository.com/artifact/org.apache.logging.log4j/log4j-core -->
+            <groupId>org.apache.logging.log4j</groupId>
+            <artifactId>log4j-api</artifactId>
+            <version>2.20.0</version>
+        </dependency>
+
     </dependencies>
 </project>
