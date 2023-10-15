@@ -9,7 +9,6 @@ class BookDetails
     String isbnCode;
     Date releaseDate;
     int pageLength;
-    String format;
     double newPrice;
     double usedPrice;
     String buttonName;

@@ -7,7 +7,7 @@ import org.openqa.selenium.support.ui.Wait;
 
 import java.util.ArrayList;
 import java.util.List;
-import static veryspicyheatwave.bwb_datascraper.ThriftBooks_DataScraper.eventLogEntry;
+import static veryspicyheatwave.bwb_datascraper.ThriftBooks_DataScraper.logger;
 
 public final class WebRetryTool
 {
@@ -25,18 +25,18 @@ public final class WebRetryTool
             }
             catch (org.openqa.selenium.TimeoutException | org.openqa.selenium.StaleElementReferenceException | NullPointerException e)
             {
-                eventLogEntry(failString);
-                eventLogEntry(e.getMessage());
+                logger.error(failString);
+                logger.error(e.getMessage());
                 if (tryCount == 4)
                 {
-                    eventLogEntry(failString);
+                    logger.error(failString);
                     throw new RuntimeException(failString, e);
                 }
                 else
                 {
                     retryTimer += (tryCount * 1000);
                     Thread.sleep(retryTimer);
-                    eventLogEntry("Attempting try number " + (1 + tryCount) + " after a " + (retryTimer / 1000) + " second wait");
+                    logger.error("Attempting try number " + (1 + tryCount) + " after a " + (retryTimer / 1000) + " second wait");
                 }
             }
         }

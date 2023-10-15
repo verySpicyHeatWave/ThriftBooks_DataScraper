@@ -14,18 +14,13 @@ import org.slf4j.LoggerFactory;
 import java.io.*;
 import java.net.URI;
 import java.net.URISyntaxException;
-import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
-import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
-import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
@@ -38,16 +33,12 @@ public class ThriftBooks_DataScraper
     //region Class-Wide Variables
     final static String BASE_URL = "https://www.thriftbooks.com";
     final static String FILTER_URL = "&b.pp=30&b.f.lang[]=40&b.pt=1&b.f.t[]=";
-    final static String GECKO_DRIVER = "geckodriver.exe";
-    final static long TIME_STAMP = System.currentTimeMillis();
-    final static String SAVE_FILE = "dataScrape_" + TIME_STAMP +".csv";
-    final static String LOG_FILE = "dataScrape_" + TIME_STAMP +".log";
-    final static String FAIL_FILE = "dataScrape_FAILS.csv";
-    final static String URL_FILE = "dataScrape_URLs.csv";
-    static boolean loggingEvents = false;
+    final static String GECKO_DRIVER = "src/main/resources/geckodriver.exe";
+    final static String URL_FILE = "logs/dataScrape_URLs.csv";
     static Genre filterGenre;
     static PrimaryFilter filterPrimary;
     static long[] averageTimes;
+    public static Logger logger = LoggerFactory.getLogger(ThriftBooks_DataScraper.class);
     //endregion
 
 
@@ -57,43 +48,35 @@ public class ThriftBooks_DataScraper
         Scanner keyboard = new Scanner(System.in);
         int firstPage, lastPage;
 
-                do
-                {
-                    firstPage = getFirstOrLastPage(keyboard, "first");
-                    if (firstPage == 0)
-                    {
-                        eventLogEntry("User chose to exit program...");
-                        return;
-                    }
-                    lastPage = getFirstOrLastPage(keyboard, "last");
-                    if (lastPage < firstPage)
-                        System.out.println("**ERROR: Last page can't be smaller than first page!\t");
-                }
-                while (lastPage < firstPage);
+        do
+        {
+            firstPage = getFirstOrLastPage(keyboard, "first");
+            if (firstPage == 0)
+            {
+                logger.info("User chose to exit program...");
+                return;
+            }
+            lastPage = getFirstOrLastPage(keyboard, "last");
+            if (lastPage < firstPage)
+                System.out.println("**ERROR: Last page can't be smaller than first page!\t");
+        }
+        while (lastPage < firstPage);
 
-                filterPrimary = getPrimaryFilter(keyboard);
-                filterGenre = getBookGenre(keyboard);
-                eventLogEntry("User selected catalog pages " + firstPage + " to " + lastPage + " filtering by the " + filterPrimary.getDisplayString() + " " + filterGenre.getDisplayString() + " books");
+        filterPrimary = getPrimaryFilter(keyboard);
+        filterGenre = getBookGenre(keyboard);
 
-        loggingEvents = askIfUserWantsToLog(keyboard);
-        if (loggingEvents)
-            eventLogEntry("Log file generated");
-
-        writeLineToCSV("Title, Author, Used Price, New Price, Genre, Format, ISBN Code, Release Date," +
-                        "Page Length, Language, ThriftBooks URL");
-        eventLogEntry("CSV file generated");
+        logger.info("BEGIN SESSION");
+        logger.info("User selected catalog pages " + firstPage + " to " + lastPage + " filtering by the " + filterPrimary.getDisplayString() + " " + filterGenre.getDisplayString() + " books");
 
         keyboard.close();
         long startTime = System.currentTimeMillis();
-        System.out.println(startTime);
-
-            scrapeBookPages(getListOfBookURLs(firstPage, lastPage));
-
+        scrapeBookPages(getListOfBookURLs(firstPage, lastPage));
         long endTime = System.currentTimeMillis();
         long duration = endTime - startTime;
 
-        eventLogEntry("Full job complete in " + getFormattedDurationString((int)duration));
-        eventLogEntry("Average of " + getFormattedDurationString((int)getAverageTime(averageTimes)) + " per book");
+        logger.info("Full job complete in " + getFormattedDurationString((int)duration));
+        logger.info("Average time " + getFormattedDurationString((int)getAverageTime(averageTimes)) + " per book");
+        logger.info("END SESSION\n\n");
     }
 
 
@@ -102,7 +85,7 @@ public class ThriftBooks_DataScraper
     {
         WebDriver driver = getFFXDriver();
         ArrayList<String> listOfBookURLs = new ArrayList<>();
-        eventLogEntry("Created the webdriver object to scrape for the book URLs");
+        logger.info("Created the webdriver object to scrape for the book URLs");
         Wait<WebDriver> wait = new WebDriverWait(driver, 4);
         int numberOfBooks = 0;
 
@@ -143,25 +126,25 @@ public class ThriftBooks_DataScraper
                 }
                 int booksRetrieved = listOfBookURLs.size() - numberOfBooks;
                 numberOfBooks = listOfBookURLs.size();
-                eventLogEntry("Got a list of " + booksRetrieved + " book links from page " + pageNo);
+                logger.info("Got a list of " + booksRetrieved + " book links from page " + pageNo);
                 long currentPageEndTime = System.nanoTime();
                 long duration = (currentPageEndTime - currentPageStartTime) / 1000000;
-                eventLogEntry(getFormattedDurationString((int) duration) + " spent scraping page " + pageNo);
+                logger.info(getFormattedDurationString((int) duration) + " spent scraping page " + pageNo);
             }
             catch (RuntimeException | InterruptedException e)
             {
-                eventLogEntry("Error: Exception while trying to access a book on catalog page " + pageNo);
-                eventLogEntry(e.getMessage());
+                logger.error("Exception while trying to access a book on catalog page " + pageNo);
+                logger.error(e.getMessage());
                 StringWriter sw = new StringWriter();
                 e.printStackTrace(new PrintWriter(sw));
-                eventLogEntry(sw.toString());
+                logger.error(sw.toString());
                 sw.close();
             }
         }
 
-        eventLogEntry("Successfully retrieved " + listOfBookURLs.size() + " book links from " + (lastPage - firstPage + 1) + " pages");
+        logger.info("Successfully retrieved " + listOfBookURLs.size() + " book links from " + (lastPage - firstPage + 1) + " pages");
         driver.quit();
-        eventLogEntry("WebDriver instance successfully closed");
+        logger.info("WebDriver instance successfully closed");
         return listOfBookURLs;
     }
 
@@ -169,7 +152,7 @@ public class ThriftBooks_DataScraper
     static void scrapeBookPages(@NotNull ArrayList<String> listOfBookURLs) throws IOException, ParseException
     {
         WebDriver driver = getFFXDriver();
-        eventLogEntry("Created the webdriver object to scrape the book URLs for book data");
+        logger.info("Created the webdriver object to scrape the book URLs for book data");
         Wait<WebDriver> wait = new WebDriverWait(driver, 4);
         int bookSuccesses = 0, bookFailures = 0, bookDuplicates = 0;
         int avgIndex = 0;
@@ -212,58 +195,51 @@ public class ThriftBooks_DataScraper
 
                 SimpleDateFormat formatter = new SimpleDateFormat("yyyy-MM-dd");
 
-                String dataEntry = String.format("'%s','%s',%.2f,%.2f,'%s','%s','%s','%s',%d,'%s'",
+                if (!(book.paperbackImageLink == null))
+                    book.imageFile = downloadImageFromURL(book.paperbackImageLink,book.title);
+                else
+                    book.imageFile = "no image";
+
+                String dataEntry = String.format("'%s','%s',%.2f,%.2f,'%s','%s','%s','%s',%d,'%s','%s'",
                         book.title.replace("'", "\\'"), book.author.replace("'", "\\'"), book.usedPrice, book.newPrice, book.genre.replace("'", "\\'"),
                         book.format, book.isbnCode, formatter.format(book.releaseDate),
-                        book.pageLength, book.link);
+                        book.pageLength, book.link, book.imageFile);
 
-                writeLineToCSV(dataEntry);
                 insertBookIntoSQLdb(dataEntry);
-                eventLogEntry(String.format("Successfully added book number %,d titled \"%s\" to the SQL database", (1 + listOfBookURLs.indexOf(bookURL)), book.title));
 
-                if (!(book.paperbackImageLink == null))
-                    downloadImageFromURL(book.paperbackImageLink,book.title,"01");
-
-                if (!(book.massImageLink == null))
-                    downloadImageFromURL(book.massImageLink,book.title,"02");
-
-                eventLogEntry(String.format("Successfully added book number %,d titled \"%s\" to the CSV file", (1 + listOfBookURLs.indexOf(bookURL)), book.title));
+                logger.info(String.format("Successfully added book number %,d titled \"%s\" to the SQL database", (1 + listOfBookURLs.indexOf(bookURL)), book.title));
                 bookSuccesses++;
             }
             catch (InterruptedException | RuntimeException | SQLException | ClassNotFoundException e)
             {
-                eventLogEntry("Error: Exception while parsing the page for book number " + (1 + listOfBookURLs.indexOf(bookURL)) + ": " + bookURL);
-                eventLogEntry(e.getMessage());
                 StringWriter sw = new StringWriter();
                 e.printStackTrace(new PrintWriter(sw));
-                eventLogEntry(sw.toString());
+                String exceptionMsg = "Exception while parsing the page for book number " +
+                        (1 + listOfBookURLs.indexOf(bookURL)) + ": " + bookURL + "\n" +
+                        e.getMessage() + "\n" + sw;
+                logger.error(exceptionMsg);
                 sw.close();
                 if (!(e.getMessage().contains("null")) && e.getMessage().contains("Duplicate entry"))
-                {
                     bookDuplicates++;
-                }
                 else
-                {
-                    writeURLsToFile(bookURL, new File(FAIL_FILE));
                     bookFailures++;
-                }
             }
             finally
             {
-                System.out.println(bookSuccesses + " successes, " + bookFailures + " failures, " + bookDuplicates + " duplicate entries");
                 long currentBookEndTime = System.nanoTime();
                 long duration = (currentBookEndTime - currentBookStartTime) / 1000000;
                 averageTimes[avgIndex] = duration;
                 avgIndex++;
-                eventLogEntry(getFormattedDurationString((int) duration) + " spent on scraping book " + (1 + listOfBookURLs.indexOf(bookURL)));
+                logger.info(bookSuccesses + " successes, " + bookFailures + " failures, " + bookDuplicates + " duplicate entries");
+                logger.info(getFormattedDurationString((int) duration) + " spent on scraping book " + (1 + listOfBookURLs.indexOf(bookURL)) + "\n\n");
             }
         }
 
         driver.quit();
-        eventLogEntry("WebDriver instance successfully closed");
-        eventLogEntry("Web scraping complete: " + bookSuccesses + " books successfully added");
-        eventLogEntry(bookFailures + " books could not be processed");
-        eventLogEntry(bookDuplicates + " books were duplicate entry attempts to the database");
+        logger.info("WebDriver instance successfully closed");
+        logger.info("Web scraping complete: " + bookSuccesses + " books successfully added");
+        logger.info(bookFailures + " books could not be processed");
+        logger.info(bookDuplicates + " books were duplicate entry attempts to the database");
     }
     //endregion
 
@@ -418,7 +394,7 @@ public class ThriftBooks_DataScraper
         }
         catch (ParseException ex)
         {
-            eventLogEntry("Failed to parse date/time value from text string...");
+            logger.error("Failed to parse date/time value from text string...");
         }
         return resp;
     }
@@ -433,7 +409,7 @@ public class ThriftBooks_DataScraper
         Connection con = null;
         try
         {
-            String insertionQuery = "INSERT INTO books(title,author,used_price,new_price,genre,binding_type,isbn_code,release_date,page_length,bookURL) VALUES";
+            String insertionQuery = "INSERT INTO books(title,author,used_price,new_price,genre,binding_type,isbn_code,release_date,page_length,bookURL,imageFile) VALUES";
             insertionQuery += "(" + csvStr + ");";
 
             con = DriverManager.getConnection(
@@ -503,55 +479,16 @@ public class ThriftBooks_DataScraper
     }
 
 
-    static void writeLineToCSV(String dataEntry)
-    {
-        try (FileWriter writer = new FileWriter(SAVE_FILE, true))
-        {
-            writer.write(dataEntry + "\n");
-        }
-        catch (IOException ex)
-        {
-            System.out.println("ERROR: Failed to write to CSV file. Oops!");
-        }
-    }
-
-
-    static void eventLogEntry(String logEntry)
-    {
-        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy/MM/dd HH:mm:ss");
-        logEntry = formatter.format(LocalDateTime.now()) + ":\t" + logEntry;
-        System.out.println(logEntry);
-        if (loggingEvents)
-        {
-            try (FileWriter writer = new FileWriter(LOG_FILE, true))
-            {
-                writer.write(logEntry + "\n");
-            }
-            catch (IOException ex)
-            {
-                System.out.println("ERROR: Failed to write to log file. Oops!");
-            }
-        }
-    }
-
-
-    static void downloadImageFromURL(@NotNull String imageURL, @NotNull String bookTitle, String imageNumber)
+    static @NotNull String downloadImageFromURL(@NotNull String imageURL, @NotNull String bookTitle)
     {
         String cleanBookTitle = bookTitle.replace(":"," -");
         if (imageURL.equalsIgnoreCase("null"))
         {
-            eventLogEntry("No image URL was found");
-            return;
+            logger.error("No image URL was found");
+            return "no image";
         }
 
-        Path fileOutputPath = Paths.get("images/" + cleanBookTitle);
-        File fileOutputStr =  new File(fileOutputPath + "/" + imageNumber + ".jpg");
-        if (!Files.exists(fileOutputPath))
-            if (!(new File(String.valueOf(fileOutputPath)).mkdirs()))
-            {
-                eventLogEntry("Error while trying to create directory " + fileOutputPath);
-                return;
-            }
+        File fileOutputStr =  new File("images/" + cleanBookTitle + ".jpg");
 
         try (BufferedInputStream in = new BufferedInputStream(new URI(imageURL).toURL().openStream());
              FileOutputStream fileOutputStream = new FileOutputStream(fileOutputStr))
@@ -562,12 +499,14 @@ public class ThriftBooks_DataScraper
             {
                 fileOutputStream.write(dataBuffer, 0, bytesRead);
             }
-            eventLogEntry("Created new image file: " + fileOutputStr);
         }
         catch (IOException | InvalidPathException | URISyntaxException e)
         {
-            eventLogEntry("Error while creating image file: " + e.getMessage());
+            logger.error("Failed to create image file: " + e.getMessage());
+            return "no image";
         }
+
+        return cleanBookTitle + ".jpg";
     }
     //endregion
 
@@ -600,23 +539,6 @@ public class ThriftBooks_DataScraper
 
         keyboard.nextLine();
         return resp;
-    }
-
-
-    static boolean askIfUserWantsToLog(@NotNull Scanner keyboard)
-    {
-        String userResponse;
-        do
-        {
-            System.out.println("Would you like to log events to a file? [(y)es/(n)o]");
-            userResponse = keyboard.nextLine();
-        }
-        while (!userResponse.equalsIgnoreCase("yes")
-                && !userResponse.equalsIgnoreCase("no")
-                && !userResponse.equalsIgnoreCase("y")
-                && !userResponse.equalsIgnoreCase("n"));
-
-        return userResponse.toLowerCase().charAt(0) == 'y';
     }
 
 
