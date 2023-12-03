@@ -7,13 +7,13 @@ import org.openqa.selenium.support.ui.Wait;
 
 import java.util.ArrayList;
 import java.util.List;
-import static veryspicyheatwave.bwb_datascraper.ThriftBooks_DataScraper.logger;
+import static veryspicyheatwave.bwb_datascraper.ThriftBooks_DataScraper.errorLogger;
 
 public final class WebRetryTool
 {
     static List<WebElement> performWebActionWithRetries(WebTaskDoer taskDoer, String taskDescription, int numRetries) throws InterruptedException, RuntimeException
     {
-        String failString = "Error: Exception while trying to " + taskDescription;
+        String failString = "Exception while trying to " + taskDescription;
         int retryTimer = 0;
         int tryCount;
         List<WebElement> resp = null;
@@ -25,18 +25,18 @@ public final class WebRetryTool
             }
             catch (org.openqa.selenium.TimeoutException | org.openqa.selenium.StaleElementReferenceException | NullPointerException e)
             {
-                logger.error(failString);
-                logger.error(e.getMessage());
-                if (tryCount == 4)
+                errorLogger.warn(failString);
+                errorLogger.warn(e.getMessage());
+                if (tryCount == numRetries)
                 {
-                    logger.error(failString);
+                    errorLogger.warn(failString);
                     throw new RuntimeException(failString, e);
                 }
                 else
                 {
                     retryTimer += (tryCount * 1000);
                     Thread.sleep(retryTimer);
-                    logger.error("Attempting try number " + (1 + tryCount) + " after a " + (retryTimer / 1000) + " second wait");
+                    errorLogger.warn("Attempting try number " + (1 + tryCount) + " after a " + (retryTimer / 1000) + " second wait");
                 }
             }
         }

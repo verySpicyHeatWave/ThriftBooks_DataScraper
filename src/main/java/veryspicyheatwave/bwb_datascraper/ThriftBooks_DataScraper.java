@@ -15,10 +15,7 @@ import java.io.*;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.nio.file.InvalidPathException;
-import java.sql.Connection;
-import java.sql.DriverManager;
-import java.sql.SQLException;
-import java.sql.Statement;
+import java.sql.*;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -34,11 +31,11 @@ public class ThriftBooks_DataScraper
     final static String BASE_URL = "https://www.thriftbooks.com";
     final static String FILTER_URL = "&b.pp=30&b.f.lang[]=40&b.pt=1&b.f.t[]=";
     final static String GECKO_DRIVER = "src/main/resources/geckodriver.exe";
-    final static String URL_FILE = "logs/dataScrape_URLs.csv";
     static Genre filterGenre;
     static PrimaryFilter filterPrimary;
     static long[] averageTimes;
     public static Logger logger = LoggerFactory.getLogger(ThriftBooks_DataScraper.class);
+    public static Logger errorLogger = LoggerFactory.getLogger("errorLogger");
     //endregion
 
 
@@ -106,7 +103,7 @@ public class ThriftBooks_DataScraper
                     driver.get(pageURL);
                     return new ArrayList<>();
                 }, "load the URL for catalog page " + pageNo, 3);
-                Thread.sleep(2000);
+                Thread.sleep(2500);
 
                 WebElement searchContainer = performWebActionWithRetries(() -> {
                     String xpathExpression = "/html/body/div[4]/div/div[2]/div/div[2]/div/div/div/div/div[2]/div[2]/div[1]/div/div[1]";
@@ -122,7 +119,6 @@ public class ThriftBooks_DataScraper
                 {
                     String bookURL = book.getAttribute("href");
                     listOfBookURLs.add(bookURL);
-                    writeURLsToFile(bookURL, new File(URL_FILE));
                 }
                 int booksRetrieved = listOfBookURLs.size() - numberOfBooks;
                 numberOfBooks = listOfBookURLs.size();
@@ -133,11 +129,11 @@ public class ThriftBooks_DataScraper
             }
             catch (RuntimeException | InterruptedException e)
             {
-                logger.error("Exception while trying to access a book on catalog page " + pageNo);
-                logger.error(e.getMessage());
+                errorLogger.error("Exception while trying to access a book on catalog page " + pageNo);
+                errorLogger.error(e.getMessage());
                 StringWriter sw = new StringWriter();
                 e.printStackTrace(new PrintWriter(sw));
-                logger.error(sw.toString());
+                errorLogger.error(sw.toString());
                 sw.close();
             }
         }
@@ -154,9 +150,8 @@ public class ThriftBooks_DataScraper
         WebDriver driver = getFFXDriver();
         logger.info("Created the webdriver object to scrape the book URLs for book data");
         Wait<WebDriver> wait = new WebDriverWait(driver, 4);
-        int bookSuccesses = 0, bookFailures = 0, bookDuplicates = 0;
-        int avgIndex = 0;
-        averageTimes = new long[listOfBookURLs.size()];
+        int bookSuccesses = 0, bookFailures = 0, bookDuplicates = 0, avgIndex = 0, lastGoodbook = 0, totalBooks = listOfBookURLs.size();
+        averageTimes = new long[totalBooks];
 
         for (String bookURL : listOfBookURLs)
         {
@@ -165,33 +160,46 @@ public class ThriftBooks_DataScraper
             book.link = bookURL;
             try
             {
+                if (sqlEntryIsDuplicate(bookURL))
+                    throw new SQLException("Duplicate entry: ISBN code exists");
+
+                WebDriver finalDriver = driver;
                 performWebActionWithRetries(() -> {
-                    driver.get(bookURL);
+                    finalDriver.get(bookURL);
                     return new ArrayList<>();
                     }, "load book number " + listOfBookURLs.indexOf(bookURL) + " book URL", 3);
                 Thread.sleep(400);
                 parseTitleAuthor(driver.getTitle(), book);
 
+                WebDriver finalDriver1 = driver;
                 WebElement pageContents = performWebActionWithRetries(() -> {
                     String xpathExpression = "//div[@class='Content']";
-                    return listGetterXPath(driver, wait, xpathExpression, true);
+                    return listGetterXPath(finalDriver1, wait, xpathExpression, true);
                 }, "build a list of all of the book page contents", 4).get(0);
                 book.genre = parseGenreString(pageContents, wait);
 
+                WebDriver finalDriver2 = driver;
                 WebElement titleBlock = performWebActionWithRetries(() -> {
                     String xpathExpression = "//h1[@class='WorkMeta-title Alternative Alternative-title']";
-                    return listGetterXPath(driver, wait, xpathExpression, true);
+                    return listGetterXPath(finalDriver2, wait, xpathExpression, true);
                 }, "locate and parse the title block", 3).get(0);
                 if (titleBlock.getText() != null)
                     book.title = titleBlock.getText();
 
+                if (sqlEntryIsDuplicate(book.title.replace("'", "\\'"), book.author.replace("'", "\\'")))
+                    throw new SQLException("Duplicate entry: title and author exist");
+
+                WebDriver finalDriver3 = driver;
                 WebElement image = performWebActionWithRetries(() -> {
                     String xpathExpression = "//img[@itemprop='image']";
-                    return listGetterXPath(driver,wait,xpathExpression,true);
+                    return listGetterXPath(finalDriver3,wait,xpathExpression,true);
                 }, "store the image link", 4).get(0);
                 book.paperbackImageLink = image.getAttribute("src");
 
                 parseButtonContainer(driver, wait, book);
+
+                if (sqlEntryIsDuplicate(book.isbnCode))
+                    throw new SQLException("Duplicate entry: ISBN code exists");
 
                 SimpleDateFormat formatter = new SimpleDateFormat("yyyy-MM-dd");
 
@@ -209,6 +217,20 @@ public class ThriftBooks_DataScraper
 
                 logger.info(String.format("Successfully added book number %,d titled \"%s\" to the SQL database", (1 + listOfBookURLs.indexOf(bookURL)), book.title));
                 bookSuccesses++;
+                lastGoodbook = 1 + listOfBookURLs.indexOf(bookURL);
+            }
+            catch (NoSuchSessionException e)
+            {
+                driver = getFFXDriver();
+                StringWriter sw = new StringWriter();
+                e.printStackTrace(new PrintWriter(sw));
+                String exceptionMsg = "Exception while parsing the page for book number " +
+                        (1 + listOfBookURLs.indexOf(bookURL)) + ": " + bookURL + "\n" +
+                        e.getMessage() + "\n" + sw;
+                errorLogger.error(exceptionMsg);
+                errorLogger.info("Last good book: " + lastGoodbook);
+                sw.close();
+                bookFailures++;
             }
             catch (InterruptedException | RuntimeException | SQLException | ClassNotFoundException e)
             {
@@ -216,13 +238,19 @@ public class ThriftBooks_DataScraper
                 e.printStackTrace(new PrintWriter(sw));
                 String exceptionMsg = "Exception while parsing the page for book number " +
                         (1 + listOfBookURLs.indexOf(bookURL)) + ": " + bookURL + "\n" +
-                        e.getMessage() + "\n" + sw;
-                logger.error(exceptionMsg);
+                        e.getMessage();// + "\n" + sw;
                 sw.close();
-                if (!(e.getMessage().contains("null")) && e.getMessage().contains("Duplicate entry"))
+                if (e.getMessage() != null && !(e.getMessage().contains("null")) && e.getMessage().contains("Duplicate entry"))
+                {
+                    logger.info(exceptionMsg);
                     bookDuplicates++;
+                }
                 else
+                {
+                    errorLogger.error(exceptionMsg);
                     bookFailures++;
+                }
+                logger.info("Last good book: " + lastGoodbook);
             }
             finally
             {
@@ -230,7 +258,8 @@ public class ThriftBooks_DataScraper
                 long duration = (currentBookEndTime - currentBookStartTime) / 1000000;
                 averageTimes[avgIndex] = duration;
                 avgIndex++;
-                logger.info(bookSuccesses + " successes, " + bookFailures + " failures, " + bookDuplicates + " duplicate entries");
+                String logStr = String.format("%d / %d successes, %d / %d failures, %d / %d duplicate entries", bookSuccesses, totalBooks, bookFailures, totalBooks, bookDuplicates, totalBooks);
+                logger.info(logStr);
                 logger.info(getFormattedDurationString((int) duration) + " spent on scraping book " + (1 + listOfBookURLs.indexOf(bookURL)) + "\n\n");
             }
         }
@@ -263,7 +292,7 @@ public class ThriftBooks_DataScraper
         WebElement buttonContainer = performWebActionWithRetries(() -> {
             String xpathExpression = "//div[@class='WorkSelector-row WorkSelector-td-height']";
             return listGetterXPath(driver, wait, xpathExpression, true);
-        }, "locate the button container", 3).get(0);
+        }, "locate the button container", 2).get(0);
 
         List<WebElement> buttons = performWebActionWithRetries(() -> {
             String tagName = "button";
@@ -394,7 +423,7 @@ public class ThriftBooks_DataScraper
         }
         catch (ParseException ex)
         {
-            logger.error("Failed to parse date/time value from text string...");
+            errorLogger.error("Failed to parse date/time value from text string...");
         }
         return resp;
     }
@@ -417,6 +446,81 @@ public class ThriftBooks_DataScraper
             Statement statement = con.createStatement();
             statement.execute(insertionQuery);
             con.close();
+        } catch (SQLException sqlE)
+        {
+            assert con != null;
+            con.close();
+            throw sqlE;
+        }
+    }
+
+
+    static boolean sqlEntryIsDuplicate(@NotNull String urlStr) throws FileNotFoundException, ClassNotFoundException, SQLException
+    {
+        String testStr;
+        if(urlStr.length() > 13)
+        {
+            String[] splitStr = urlStr.split("#");
+            if (!splitStr[splitStr.length - 1].contains("isbn="))
+                return false;
+            testStr = splitStr[splitStr.length - 1].replace("isbn=","");
+        }
+        else
+        {
+            testStr = urlStr;
+        }
+
+        Class.forName("com.mysql.cj.jdbc.Driver");
+        String pwSQL = getSQLPassword();
+        Connection con = null;
+        try
+        {
+            String queryStr = String.format("SELECT * FROM books WHERE isbn_code = '%s';", testStr);
+
+            con = DriverManager.getConnection(
+                    "jdbc:mysql://localhost:3306/thriftBooksDB", "root", pwSQL);
+
+            Statement statement = con.createStatement();
+            ResultSet results = statement.executeQuery(queryStr);
+
+            int resCount = 0;
+            while(results.next())
+            {
+                resCount++;
+            }
+            con.close();
+            return resCount > 0;
+        } catch (SQLException sqlE)
+        {
+            assert con != null;
+            con.close();
+            throw sqlE;
+        }
+    }
+
+
+    static boolean sqlEntryIsDuplicate(@NotNull String title, @NotNull String author) throws FileNotFoundException, ClassNotFoundException, SQLException
+    {
+        Class.forName("com.mysql.cj.jdbc.Driver");
+        String pwSQL = getSQLPassword();
+        Connection con = null;
+        try
+        {
+            String queryStr = String.format("SELECT * FROM books WHERE title = '%s' AND author = '%s';", title, author);
+
+            con = DriverManager.getConnection(
+                    "jdbc:mysql://localhost:3306/thriftBooksDB", "root", pwSQL);
+
+            Statement statement = con.createStatement();
+            ResultSet results = statement.executeQuery(queryStr);
+
+            int resCount = 0;
+            while(results.next())
+            {
+                resCount++;
+            }
+            con.close();
+            return resCount > 0;
         } catch (SQLException sqlE)
         {
             assert con != null;
@@ -466,25 +570,12 @@ public class ThriftBooks_DataScraper
     }
 
 
-    static void writeURLsToFile(String dataEntry, File writeFile)
-    {
-        try (FileWriter writer = new FileWriter(writeFile, true))
-        {
-            writer.write(dataEntry + "\n");
-        }
-        catch (IOException ex)
-        {
-            System.out.println("ERROR: Failed to write to" + writeFile + " Oops!");
-        }
-    }
-
-
     static @NotNull String downloadImageFromURL(@NotNull String imageURL, @NotNull String bookTitle)
     {
-        String cleanBookTitle = bookTitle.replace(":"," -");
+        String cleanBookTitle = bookTitle.replace(":"," -").replace("'","");
         if (imageURL.equalsIgnoreCase("null"))
         {
-            logger.error("No image URL was found");
+            errorLogger.error("No image URL was found");
             return "no image";
         }
 
@@ -502,7 +593,7 @@ public class ThriftBooks_DataScraper
         }
         catch (IOException | InvalidPathException | URISyntaxException e)
         {
-            logger.error("Failed to create image file: " + e.getMessage());
+            errorLogger.error("Failed to create image file: " + e.getMessage());
             return "no image";
         }
 
@@ -669,6 +760,10 @@ public class ThriftBooks_DataScraper
         System.setProperty("webdriver.gecko.driver",GECKO_DRIVER);
         FirefoxOptions ffxOptions = new FirefoxOptions();
         FirefoxProfile profile = new FirefoxProfile();
+        profile.setPreference("browser.cache.disk.enable",false);
+        profile.setPreference("browser.cache.memory.enable",false);
+        profile.setPreference("browser.cache.offline.enable",false);
+        profile.setPreference("network.http.use-cache",false);
         ffxOptions.setCapability(FirefoxDriver.PROFILE, profile);
         ffxOptions.setHeadless(true);
         return new FirefoxDriver(ffxOptions);

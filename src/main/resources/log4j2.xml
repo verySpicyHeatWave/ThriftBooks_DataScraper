@@ -30,8 +30,10 @@
 
     </Appenders>
     <Loggers>
-        <Root level="info" additivity="false">
+        <Logger name = "errorLogger" level = "warn">
             <appender-ref ref="fileLogger" />
+        </Logger>
+        <Root level="info" additivity="false">
             <appender-ref ref="console" />
         </Root>
     </Loggers>
