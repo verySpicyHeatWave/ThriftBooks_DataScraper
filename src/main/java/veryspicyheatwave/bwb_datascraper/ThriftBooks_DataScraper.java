@@ -12,6 +12,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.*;
+import java.net.ConnectException;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.nio.file.InvalidPathException;
@@ -67,10 +68,19 @@ public class ThriftBooks_DataScraper
 
         keyboard.close();
         long startTime = System.currentTimeMillis();
-        scrapeBookPages(getListOfBookURLs(firstPage, lastPage));
+        try
+        {
+            scrapeBookPages(getListOfBookURLs(firstPage, lastPage));
+        }
+        catch (ConnectException e)
+        {
+            errorLogger.error("CONNECTION FAILURE!", e);
+        }
         long endTime = System.currentTimeMillis();
         long duration = endTime - startTime;
 
+
+        logger.info("Finished scraping catalog pages " + firstPage + " to " + lastPage + " filtering by the " + filterPrimary.getDisplayString() + " " + filterGenre.getDisplayString() + " books");
         logger.info("Full job complete in " + getFormattedDurationString((int)duration));
         logger.info("Average time " + getFormattedDurationString((int)getAverageTime(averageTimes)) + " per book");
         logger.info("END SESSION\n\n");
@@ -150,7 +160,7 @@ public class ThriftBooks_DataScraper
         WebDriver driver = getFFXDriver();
         logger.info("Created the webdriver object to scrape the book URLs for book data");
         Wait<WebDriver> wait = new WebDriverWait(driver, 4);
-        int bookSuccesses = 0, bookFailures = 0, bookDuplicates = 0, avgIndex = 0, lastGoodbook = 0, totalBooks = listOfBookURLs.size();
+        int bookSuccesses = 0, bookFailures = 0, bookDuplicates = 0, avgIndex = 0, lastGoodBook = 0, totalBooks = listOfBookURLs.size();
         averageTimes = new long[totalBooks];
 
         for (String bookURL : listOfBookURLs)
@@ -217,7 +227,7 @@ public class ThriftBooks_DataScraper
 
                 logger.info(String.format("Successfully added book number %,d titled \"%s\" to the SQL database", (1 + listOfBookURLs.indexOf(bookURL)), book.title));
                 bookSuccesses++;
-                lastGoodbook = 1 + listOfBookURLs.indexOf(bookURL);
+                lastGoodBook = 1 + listOfBookURLs.indexOf(bookURL);
             }
             catch (NoSuchSessionException e)
             {
@@ -228,7 +238,8 @@ public class ThriftBooks_DataScraper
                         (1 + listOfBookURLs.indexOf(bookURL)) + ": " + bookURL + "\n" +
                         e.getMessage() + "\n" + sw;
                 errorLogger.error(exceptionMsg);
-                errorLogger.info("Last good book: " + lastGoodbook);
+                errorLogger.info("Last good " + filterPrimary.getDisplayString() + " " + filterGenre.getDisplayString() + " book: " + lastGoodBook);
+                logger.info("Last good " + filterPrimary.getDisplayString() + " " + filterGenre.getDisplayString() + " book: " + lastGoodBook);
                 sw.close();
                 bookFailures++;
             }
@@ -250,7 +261,8 @@ public class ThriftBooks_DataScraper
                     errorLogger.error(exceptionMsg);
                     bookFailures++;
                 }
-                logger.info("Last good book: " + lastGoodbook);
+                errorLogger.info("Last good " + filterPrimary.getDisplayString() + " " + filterGenre.getDisplayString() + " book: " + lastGoodBook);
+                logger.info("Last good " + filterPrimary.getDisplayString() + " " + filterGenre.getDisplayString() + " book: " + lastGoodBook);
             }
             finally
             {
